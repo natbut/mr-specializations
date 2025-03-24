@@ -1,0 +1,27 @@
+
+--extra-index-url https://download.pytorch.org/whl/cu118
+# -f https://data.pyg.org/whl/torch-2.5.0+cu118.html
+
+torch==2.6.0+cu118
+torch-geometric
+# torch-cluster # not compatible with torch 2.6.0
+
+torchRL
+# benchmarl
+vmas #1.5.0
+matplotlib
+wandb
+numpy
+PyYAML
+pillow
+moviepy
+tqdm
+scipy
+
+# Install Torch-Geometric dependencies manually
+# torch-scatter
+# torch-sparse
+# torch-cluster
+# torch-spline-conv
+
+

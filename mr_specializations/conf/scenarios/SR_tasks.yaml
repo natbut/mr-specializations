@@ -1,0 +1,22 @@
+
+n_agents_holonomic: 0
+n_agents_diff_drive: 1
+n_agents_car: 0
+
+n_tasks: 2
+n_obstacles: 0
+
+agent_radius: 0.1
+
+world_spawning_x: 1
+world_spawning_y: 1
+
+comms_rendering_range: 0
+
+lidar_range: 0
+n_lidar_rays: 0
+
+shared_rew: 0
+final_reward: 0
+agent_collision_penalty: 0
+
