@@ -1,105 +1,177 @@
 import torch
 import torchrl
 from torchrl.envs import EnvBase
-from torch_geometric.data import Data  # For Graph Representation
+from torchrl.data import BoundedTensorSpec, Unbounded, Composite
+from torch_geometric.data import Data, Batch  # For Graph Representation
+from tensordict.tensordict import TensorDict
 
-from vmas.simulator import World
 from vmas.simulator.scenario import BaseScenario
+from vmas import make_env
 from typing import Tuple, Dict
 
 
 class VMASPlanningEnv(EnvBase):
-    def __init__(self, scenario: BaseScenario, batch_size: int, device: str = "cpu", **kwargs):
-        super().__init__(**kwargs)
+    def __init__(
+            self, scenario: BaseScenario, 
+            batch_size: int, 
+            device: str = "cpu", 
+            **kwargs
+            ):
+        # TODO Check kwargs passing
+        super().__init__(batch_size=batch_size, device=device)
 
         # VMAS Environment Configuration
+        # TODO need batch_size worlds?
         self.scenario = scenario
-        self.device = torch.device(device)
-        self.world = scenario.make_world(batch_dim=batch_size, device=self.device)
-        self.batch_size = batch_size
+        # self.device = device
+        # self.world = scenario.make_world(batch_dim=1, device=device)
+        self.sim_env = make_env(self.scenario,
+                            self.batch_size[0],
+                            device=self.device,
+                            )
         self.horizon = 20  # Number of steps to execute per trajectory
+        self.graph_batch = None
+        self.sim_obs = None
+        print(f"Initialized environment...")
 
         # Define Observation & Action Specs
-        self.observation_spec = torchrl.envs.CompositeSpec(
-            {"graph": torchrl.envs.UnboundedContinuousTensorSpec((self.batch_size,))}
+        self.observation_spec = Composite(
+            {"graph": Unbounded(shape=self.batch_size)},
+            shape=self.batch_size,
         )
-        self.action_spec = torchrl.envs.UnboundedContinuousTensorSpec(
-            (self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
+        print(f"\nObservation Spec:\n{self.observation_spec}")
+
+        self.action_spec = Unbounded(
+            shape=(self.batch_size[0], self.scenario.n_agents, self.scenario.n_tasks)
         )
-        self.reward_spec = torchrl.envs.UnboundedContinuousTensorSpec((self.batch_size,))
+        print(f"\nAction (Weights) Spec:\n{self.action_spec}")
 
-    def reset(self) -> Dict[str, torch.Tensor]:
-        """Reset the VMAS world and return initial state."""
-        self.scenario.reset_world_at()
-        return {"graph": self._build_graph_representation()}
+        self.reward_spec = Unbounded(shape=self.batch_size)
+        print(f"\nReward Spec:\n{self.reward_spec}")
 
-    def step(self, actions: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, Dict]:
+    def _reset(self, obs_tensordict=None) -> Dict[str, torch.Tensor]:
+        """Reset all VMAS worlds and return initial state."""
+        self.sim_obs = self.sim_env.reset()
+        return TensorDict({"graph": self._build_obs_graph()})
+
+    def _step(self, actions: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, Dict]:
         """
-        Steps through the environment:
+        Steps through the environment (IN PARALLEL):
         1. Use heuristic weights to plan agent trajectories.
         2. Execute the trajectories for the given horizon.
         3. Return next state, rewards, and termination status.
         """
         # Process actions (heuristic weights)
-        heuristic_weights = actions.view(self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
-
-        # Compute trajectories based on heuristic weights
-        self._compute_trajectories(heuristic_weights)
+        # heuristic_weights = actions.view(self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
+        heuristic_weights = actions
+        print(f"Heuristic Weights: \n{heuristic_weights}")
 
         # Execute and aggregate rewards
         rewards = torch.zeros(self.batch_size, device=self.device)
-        for _ in range(self.horizon):
-            self.world.step()
-            rewards += self._compute_rewards()
+        for t in range(self.horizon):
+            # Update planning graph (env is dynamic)
+            self._build_obs_graph()
+            # TODO Compute agent trajectories & get actions
+            for agent in self.sim_env.agents:
+                u_action = agent.get_control_action(self.graph_batch, heuristic_weights, self.horizon-t) # TODO get next actions from agent controllers
+            self.sim_obs, rews, dones, info = self.sim_env.step(u_action)
+            rewards += rews
 
         # Construct next state representation
-        next_state = {"graph": self._build_graph_representation()}
-        done = self.scenario.done()
+        next_state = TensorDict({"graph": self._build_obs_graph()})
+        done = self.scenario.done() # TODO check done compute
 
         return next_state, rewards, done, {}
-
-    def _build_graph_representation(self) -> Data:
-        """Convert VMAS state into a graph representation for policy input."""
-        agents = self.world.agents
-        tasks = self.scenario.tasks
-        obstacles = self.scenario.obstacles
-
-        # Collect node features
-        agent_features = torch.stack([a.state.pos for a in agents], dim=0)  # Agent positions
-        task_features = torch.stack([t.state.pos for t in tasks], dim=0)  # Task positions
-        obstacle_features = torch.stack([o.state.pos for o in obstacles], dim=0)  # Obstacle positions
-
-        # Create graph data structure
-        nodes = torch.cat([agent_features, task_features, obstacle_features], dim=0)
-        edges = self._compute_graph_edges(nodes)
-        return Data(x=nodes, edge_index=edges)
-
-    def _compute_graph_edges(self, nodes: torch.Tensor) -> torch.Tensor:
-        """Compute edges based on spatial proximity."""
-        dist_matrix = torch.cdist(nodes, nodes)  # Compute pairwise distances
-        edge_index = (dist_matrix < 0.5).nonzero(as_tuple=True)  # Threshold-based connectivity
-        return torch.stack(edge_index, dim=0)
-
-    def _compute_trajectories(self, heuristic_weights: torch.Tensor):
-        """Plan agent trajectories based on heuristic weights."""
-        for agent, weights in zip(self.world.agents, heuristic_weights):
-            agent.policy_weights = weights  # Assign heuristic weights
-            agent.plan_trajectory()  # Custom trajectory planner
-
-    def _compute_rewards(self) -> torch.Tensor:
-        """Compute reward based on task completion."""
-        return torch.stack([self.scenario.reward(agent) for agent in self.world.agents], dim=0).sum(dim=0)
-
-
-# Example Usage:
-if __name__ == "__main__":
-    scenario = Scenario()
-    env = VMASPlanningEnv(scenario, batch_size=4, device="cuda")
     
-    state = env.reset()
-    actions = torch.randn(env.batch_size, scenario.n_agents, scenario.n_tasks)  # Random actions
-    next_state, rewards, done, _ = env.step(actions)
-    
-    print("Next State:", next_state)
-    print("Rewards:", rewards)
-    print("Done:", done)
+    def _set_seed(self, seed: int) -> None:
+        """Set random seed for reproducibility."""
+        torch.manual_seed(seed)
+
+
+    def _build_obs_graph(self,
+                         node_dim=2,
+                         connectivity=4,
+                         verbose=False
+                         ) -> Data:
+        """
+        Discretize type & pos based observations into a planning graph.
+        Obs should be dict with "env_dims": (x, y), "NAME": (x,y), ...
+        """
+        global_obs_dict = self.sim_obs[0] # each entry is num_envs x entry_size
+        if verbose: print(f"BuildGraph Obs:\n {global_obs_dict}") # NOTE only need 1 obs if global
+
+        all_graphs = []
+        
+        for i in range(self.batch_size[0]):
+            # Dynamically compute node_rad to allow fixed graph topology for varying problem sizes
+            element_positions = torch.cat([global_obs_dict[key][i] for key in global_obs_dict if "obs" in key])
+            min_dims = torch.min(element_positions, dim=0).values
+            max_dims = torch.max(element_positions, dim=0).values
+
+            node_rad = torch.max((max_dims - min_dims)/node_dim)
+            
+            if verbose: print("Check entry", element_positions, "Max/Min:", max_dims, min_dims, "Rad:", node_rad)
+
+            # Create a grid of node centers
+            node_positions = []
+            node_indices = {}
+            index = 0
+            for x_idx in range(node_dim):
+                for y_idx in range(node_dim):
+                    node_pos = min_dims + node_rad*(torch.tensor((x_idx+0.5, y_idx+0.5), device=self.device))
+                    node_positions.append(node_pos)
+                    node_indices[(x_idx, y_idx)] = index
+                    index += 1
+            
+            num_nodes = len(node_positions)
+            node_positions = torch.stack(node_positions)
+            
+            if verbose: print(f"Env {i} Node positions: \n{node_positions} \nEnv {i} Node Indices: {node_indices}")
+
+            # Compute binary feature vectors
+            features = torch.zeros((num_nodes, 3), device=self.device)  # [agent_presence, task_presence, obstacle_presence]
+            
+            for j, feature_type in enumerate(['obs_agents', 'obs_tasks', 'obs_obstacles']):
+                feature_positions = global_obs_dict[feature_type][i]  # Positions of the feature in this batch element
+                
+                for k, node_pos in enumerate(node_positions):
+                    dists = torch.norm(feature_positions - node_pos, dim=1)
+                    if torch.any(dists < node_rad):
+                        features[k, j] = torch.sum(dists < node_rad)/len(feature_positions) # Normalize by num features
+
+            if verbose: print("Node features:\n", features)
+
+            # Compute edge adjacency list & attributes (4-way or 8-way connectivity)
+            edge_list = []
+            edge_attrs = []  # To store distances between connected nodes
+            for (x_idx, y_idx), node_id in node_indices.items():
+                neighbors = []
+                if connectivity == 4:
+                    neighbors = [(x_idx-1, y_idx), (x_idx+1, y_idx), (x_idx, y_idx-1), (x_idx, y_idx+1)]
+                elif connectivity == 8:
+                    neighbors = [(x_idx-1, y_idx-1), (x_idx-1, y_idx), (x_idx-1, y_idx+1),
+                                (x_idx, y_idx-1), (x_idx, y_idx+1),
+                                (x_idx+1, y_idx-1), (x_idx+1, y_idx), (x_idx+1, y_idx+1)]
+                
+                for neighbor in neighbors:
+                    if neighbor in node_indices:
+                        neighbor_id = node_indices[neighbor]
+                        edge_list.append((node_id, neighbor_id))
+                        # Compute distance between nodes
+                        dist = torch.norm(node_positions[node_id] - node_positions[neighbor_id])
+                        edge_attrs.append(dist)
+
+            edge_index = torch.tensor(edge_list, dtype=torch.long, device=self.device).T  # Shape [2, num_edges] (COO)
+            edge_attrs = torch.tensor(edge_attrs, dtype=torch.float, device=self.device)  # Shape [num_edges]
+            if verbose: print("Edge index:\n", edge_index)
+            if verbose: print("Edge attributes (distances):\n", edge_attrs)
+
+            # Create a graph for this environment
+            graph = Data(x=features, edge_index=edge_index, edge_attr=edge_attrs, pos=node_positions)
+            all_graphs.append(graph)
+        
+        # Batch graphs together
+        batched_graph = Batch.from_data_list(all_graphs)
+        if verbose: print("Batched graph:", batched_graph)
+        self.graph_batch = batched_graph # TODO maybe change where this is defined
+        return batched_graph
