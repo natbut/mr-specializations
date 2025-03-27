@@ -1,4 +1,5 @@
 import copy
+import multiprocessing
 import time
 from typing import Union
 
@@ -9,7 +10,6 @@ from scenarios.SR_tasks import Scenario
 from vmas import make_env
 # from vmas.simulator.scenario import BaseScenario
 from planning_env import VMASPlanningEnv
-
 
 # TORCHRL
 from collections import defaultdict
@@ -40,7 +40,7 @@ from torchrl.objectives.value import GAE
 from tqdm import tqdm
 
 
-def train_PPO():
+def train_PPO(scenario):
     ### HYPERPARAMS ###
     is_fork = multiprocessing.get_start_method() == "fork"
     device = (
@@ -66,8 +66,8 @@ def train_PPO():
     entropy_eps = 1e-4
 
     ### DEFINE ENVIRONMENT ###
-    env = VMASPlanningEnv(Scenario,
-                          batch_size=100,
+    env = VMASPlanningEnv(scenario,
+                          batch_size=(10,),
                           device=device
                           )
 
@@ -205,4 +205,4 @@ def train_PPO():
 
 if __name__ == "__main__":
     
-    pass
+    train_PPO(Scenario())

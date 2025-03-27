@@ -14,9 +14,10 @@ from vmas.simulator.core import Agent, Box, Landmark, Sphere, World
 from vmas.simulator.dynamics.diff_drive import DiffDrive
 from vmas.simulator.dynamics.holonomic import Holonomic
 from vmas.simulator.dynamics.kinematic_bicycle import KinematicBicycle
-
 from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.sensors import Lidar
+
+from agents.planning_agent import PlanningAgent
 
 from vmas.simulator.utils import (
     ANGULAR_FRICTION,
@@ -38,7 +39,7 @@ class Scenario(BaseScenario):
         self.plot_grid = False  # You can use this to plot a grid under the rendering for visualization purposes
 
         self.n_agents_holonomic = kwargs.pop(
-            "n_agents_holonomic", 1
+            "n_agents_holonomic", 2
         )  # Number of agents with holonomic dynamics
         self.n_agents_diff_drive = kwargs.pop(
             "n_agents_diff_drive", 0
@@ -148,7 +149,7 @@ class Scenario(BaseScenario):
             ]  # Agent LIDAR sensor
 
             if i < self.n_agents_holonomic:
-                agent = Agent(
+                agent = PlanningAgent(
                     name=f"holonomic_{i}",
                     collide=True,
                     color=color,
@@ -160,7 +161,7 @@ class Scenario(BaseScenario):
                     dynamics=Holonomic(),  # If you go to its class you can see it has 2 actions: force_x, and force_y
                 )
             elif i < self.n_agents_holonomic + self.n_agents_diff_drive:
-                agent = Agent(
+                agent = PlanningAgent(
                     name=f"diff_drive_{i - self.n_agents_holonomic}",
                     collide=True,
                     color=color,
@@ -176,7 +177,7 @@ class Scenario(BaseScenario):
             else:
                 max_steering_angle = torch.pi / 4
                 width = self.agent_radius
-                agent = Agent(
+                agent = PlanningAgent(
                     name=f"car_{i-self.n_agents_holonomic-self.n_agents_diff_drive}",
                     collide=True,
                     color=color,
@@ -304,23 +305,32 @@ class Scenario(BaseScenario):
 
     def observation(self, agent: Agent):
         obs = {
-            "obs": torch.cat(
-                [
-                    agent.state.pos - task.state.pos for task in self.tasks
-                ]  # Relative position to tasks (fundamental)
-                + [
-                    agent.state.pos - obstacle.state.pos for obstacle in self.obstacles
-                ]  # Relative position to obstacles (fundamental)
-                + [
-                    sensor._max_range - sensor.measure() for sensor in agent.sensors
-                ],  # LIDAR to avoid other agents
-                dim=-1,
+            "obs_agents": torch.stack(
+                [agent.state.pos for agent in self.world.agents],
+                # dim=-1
             ),
+            "obs_tasks": torch.stack(
+                [task.state.pos for task in self.tasks],
+                # dim=-1
+            ),
+            "obs_obstacles": torch.stack(
+                [obstacle.state.pos for obstacle in self.obstacles],
+                # dim=-1
+            ),
+            # : torch.cat(
+            #     [
+            #         task.state.pos for task in self.tasks
+            #     ]
+            #     + [
+            #         obstacle.state.pos for obstacle in self.obstacles
+            #     ],
+            #     dim=-1,
+            # ),
             "pos": agent.state.pos,
             "vel": agent.state.vel,
         }
         if not isinstance(agent.dynamics, Holonomic):
-            # Non hoonomic agents need to know angular states
+            # Non-holonomic agents need to know angular states
             obs.update(
                 {
                     "rot": agent.state.rot,
