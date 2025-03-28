@@ -26,11 +26,11 @@ if __name__ == "__main__":
     actions_tdict = TensorDict({"actions": actions}, batch_size=env.batch_size)
 
     obs_graph = env.reset()
-    print("\nReset Obs Graph:\n", obs_graph["graph"], "Num graphs:", obs_graph["graph"].num_graphs) #, "\n Graph 0:\n", obs_graph[0])
-    print("\nGraphs to Data list:\n", obs_graph["graph"].to_data_list())
+    # print("\nReset Obs Graph:\n", obs_graph["graph"], "Num graphs:", obs_graph["graph"].num_graphs) #, "\n Graph 0:\n", obs_graph[0])
+    # print("\nGraphs to Data list:\n", obs_graph["graph"].to_data_list())
 
-    next_state, rewards, done, _ = env.step(actions_tdict)
+    for _ in range(10):
+        next_tdict= env.step(actions_tdict)
+
+    print("ENV STEP RETURN:", next_tdict)
     
-    print("Next State:", next_state)
-    print("Rewards:", rewards)
-    print("Done:", done)
