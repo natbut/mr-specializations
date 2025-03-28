@@ -15,15 +15,21 @@ if __name__ == "__main__":
         device="cuda",
         )
     
-    actions = torch.zeros(env.batch_size[0],
-                          env.scenario.n_agents,
-                          env.scenario.n_tasks
-                          )  # Random actions
+    # actions = torch.zeros((env.batch_size[0],
+    #                       env.scenario.n_agents,
+    #                       env.scenario.n_tasks + env.scenario.n_agents + env.scenario.n_obstacles),
+    #                       device="cuda"
+    #                       )  # Random actions
 
-    for i in range(env.scenario.n_agents):
-        actions[:, i, i] = 1
+    actions = torch.tensor([[[1., 0., 0., 0., 0., 0.],
+                            [1., 0., 0., 0., 0., 0.]],
+
+                            [[0., 1., 0., 0., 0., 0.],
+                            [0., 1., 0., 0., 0., 0.]]], device='cuda:0')
+    
     # Convert actions into a TensorDict
     actions_tdict = TensorDict({"actions": actions}, batch_size=env.batch_size)
+    print("Actions:", actions_tdict)
 
     obs_graph = env.reset()
     # print("\nReset Obs Graph:\n", obs_graph["graph"], "Num graphs:", obs_graph["graph"].num_graphs) #, "\n Graph 0:\n", obs_graph[0])
