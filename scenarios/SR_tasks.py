@@ -51,7 +51,7 @@ class Scenario(BaseScenario):
             self.n_agents_holonomic + self.n_agents_diff_drive + self.n_agents_car
         )
         self.n_tasks = kwargs.pop("n_tasks", 2)
-        self.n_obstacles = kwargs.pop("n_obstacles", 2)
+        self.n_obstacles = kwargs.pop("n_obstacles", 1)
 
         self.world_spawning_x = kwargs.pop(
             "world_spawning_x", 1
@@ -340,7 +340,7 @@ class Scenario(BaseScenario):
         return obs
 
     def done(self) -> Tensor:
-        print("Completed tasks:", self.completed_tasks)
+        # print("Completed tasks:", self.completed_tasks)
         return self.completed_tasks.any(dim=-1) #self.all_goal_reached
 
     def info(self, agent: Agent) -> Dict[str, Tensor]:

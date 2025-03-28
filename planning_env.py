@@ -1,7 +1,7 @@
 import torch
 import torchrl
 from torchrl.envs import EnvBase
-from torchrl.data import BoundedTensorSpec, Unbounded, Composite
+from torchrl.data import Unbounded, Composite, Bounded
 from torch_geometric.data import Data, Batch  # For Graph Representation
 from tensordict.tensordict import TensorDict
 
@@ -30,29 +30,33 @@ class VMASPlanningEnv(EnvBase):
                             device=self.device,
                             )
         self.horizon = 20  # Number of steps to execute per trajectory
+        self.render = True
+        self.count = 0
         self.graph_batch = None
         self.sim_obs = None
         print(f"Initialized environment...")
 
         # Define Observation & Action Specs
         self.observation_spec = Composite(
-            {"graph": Unbounded(shape=self.batch_size)},
+            observation=Unbounded(shape=self.batch_size),
             shape=self.batch_size,
         )
         print(f"\nObservation Spec:\n{self.observation_spec}")
 
-        self.action_spec = Unbounded(
+        self.action_spec = Bounded(
+            low=torch.zeros((self.batch_size[0], self.scenario.n_agents, self.scenario.n_tasks)),
+            high=torch.ones((self.batch_size[0], self.scenario.n_agents, self.scenario.n_tasks)),
             shape=(self.batch_size[0], self.scenario.n_agents, self.scenario.n_tasks)
         )
         print(f"\nAction (Weights) Spec:\n{self.action_spec}")
 
-        self.reward_spec = Unbounded(shape=self.batch_size)
+        self.reward_spec = Unbounded(shape=(self.batch_size[0], self.scenario.n_agents))
         print(f"\nReward Spec:\n{self.reward_spec}")
 
-    def _reset(self, obs_tensordict=None) -> Dict[str, torch.Tensor]:
+    def _reset(self, obs_tensordict=None) -> TensorDict:
         """Reset all VMAS worlds and return initial state."""
         self.sim_obs = self.sim_env.reset()
-        return TensorDict({"graph": self._build_obs_graph()})
+        return TensorDict({"observation": self._build_obs_graph()}, device=self.device)
 
     def _step(self, actions: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, Dict]:
         """
@@ -67,21 +71,53 @@ class VMASPlanningEnv(EnvBase):
         print(f"Heuristic Weights: \n{heuristic_weights}")
 
         # Execute and aggregate rewards
-        rewards = torch.zeros(self.batch_size, device=self.device)
+        rewards = torch.zeros((self.batch_size[0], self.sim_env.n_agents), device=self.device)
+        frame_list = []
         for t in range(self.horizon):
             # Update planning graph (env is dynamic)
             self._build_obs_graph()
-            # TODO Compute agent trajectories & get actions
+            # Compute agent trajectories & get actions
+            u_action = []
             for agent in self.sim_env.agents:
-                u_action = agent.get_control_action(self.graph_batch, heuristic_weights, self.horizon-t) # TODO get next actions from agent controllers
+                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights, self.horizon-t)) # get next actions from agent controllers
+            print("U-ACTION:", u_action)
             self.sim_obs, rews, dones, info = self.sim_env.step(u_action)
-            rewards += rews
+            # print("Rewards:", rewards, "rews:", torch.stack(rews))
+            rewards += torch.stack(rews)
 
-        # Construct next state representation
-        next_state = TensorDict({"graph": self._build_obs_graph()})
-        done = self.scenario.done() # TODO check done compute
+            if self.render:
+                frame = self.sim_env.render(
+                    mode="rgb_array",
+                    agent_index_focus=None,  # Can give the camera an agent index to focus on
+                )
+                frame_list.append(frame)
+            
+        if self.render:
+            from moviepy import ImageSequenceClip
+            fps = 20
+            clip = ImageSequenceClip(frame_list, fps=fps)
+            clip.write_gif(f"img/rollout_{self.count}.gif", fps=fps)
+            self.count += 1
 
-        return next_state, rewards, done, {}
+        # Construct next state representation   
+        next_state = TensorDict(
+            {"observation": self._build_obs_graph()},
+            device=self.device
+        )
+        rew_tdict = TensorDict(
+            {"reward": rewards},
+            device=self.device
+        )
+        done_tdict = TensorDict(
+            {"done": self.scenario.done()}, # TODO check done compute
+            device=self.device
+        )
+
+        # Should return next_state, rewards, done as tensordict
+        next_state.update(rew_tdict).update(done_tdict) 
+        print("Next TDict:\n", next_state)
+        return next_state #, rewards, done, {}
+
     
     def _set_seed(self, seed: int) -> None:
         """Set random seed for reproducibility."""
@@ -89,7 +125,7 @@ class VMASPlanningEnv(EnvBase):
 
 
     def _build_obs_graph(self,
-                         node_dim=2,
+                         node_dim=10,
                          connectivity=4,
                          verbose=False
                          ) -> Data:
@@ -104,7 +140,15 @@ class VMASPlanningEnv(EnvBase):
         
         for i in range(self.batch_size[0]):
             # Dynamically compute node_rad to allow fixed graph topology for varying problem sizes
-            element_positions = torch.cat([global_obs_dict[key][i] for key in global_obs_dict if "obs" in key])
+            element_positions = []
+            for key in global_obs_dict:
+                if "obs" in key:
+                    for entity in global_obs_dict[key]:
+                        element_positions.append(entity[i])
+            # print([global_obs_dict[key] for key in global_obs_dict if "obs" in key])
+            # element_positions = torch.cat([el[i] for el in [global_obs_dict[key] for key in global_obs_dict if "obs" in key]])
+            # print("el pos", torch.stack(element_positions))
+            element_positions = torch.stack(element_positions)
             min_dims = torch.min(element_positions, dim=0).values
             max_dims = torch.max(element_positions, dim=0).values
 
@@ -132,7 +176,11 @@ class VMASPlanningEnv(EnvBase):
             features = torch.zeros((num_nodes, 3), device=self.device)  # [agent_presence, task_presence, obstacle_presence]
             
             for j, feature_type in enumerate(['obs_agents', 'obs_tasks', 'obs_obstacles']):
-                feature_positions = global_obs_dict[feature_type][i]  # Positions of the feature in this batch element
+                feature_positions = []
+                for entity in global_obs_dict[feature_type]:
+                        feature_positions.append(entity[i])
+                # feature_positions = global_obs_dict[feature_type][i]  # Positions of the feature in this batch element
+                feature_positions = torch.stack(feature_positions)
                 
                 for k, node_pos in enumerate(node_positions):
                     dists = torch.norm(feature_positions - node_pos, dim=1)
