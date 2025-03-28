@@ -51,7 +51,7 @@ class Scenario(BaseScenario):
             self.n_agents_holonomic + self.n_agents_diff_drive + self.n_agents_car
         )
         self.n_tasks = kwargs.pop("n_tasks", 2)
-        self.n_obstacles = kwargs.pop("n_obstacles", 1)
+        self.n_obstacles = kwargs.pop("n_obstacles", 2)
 
         self.world_spawning_x = kwargs.pop(
             "world_spawning_x", 1
@@ -73,7 +73,7 @@ class Scenario(BaseScenario):
         )  # Whether the agents get a global or local reward for going to their goals
         
         self.task_comp_range = kwargs.pop(
-            "task_comp_range", 0.15
+            "task_comp_range", 0.25
         )
         self.complete_task_coeff = kwargs.pop(
             "task_reward", 1
@@ -127,12 +127,16 @@ class Scenario(BaseScenario):
             (max(self.n_agents - len(known_colors), 0), 3), device=device
         )  # Other colors if we have more agents are random
 
+        self.agent_color = Color.BLUE
+        self.task_color = Color.ORANGE
+
         for i in range(self.n_agents):
-            color = (
-                known_colors[i]
-                if i < len(known_colors)
-                else colors[i - len(known_colors)]
-            )  # Get color for agent
+            color = self.agent_color
+            # color = (
+            #     known_colors[i]
+            #     if i < len(known_colors)
+            #     else colors[i - len(known_colors)]
+            # )  # Get color for agent
 
             sensors = [
                 Lidar(
@@ -157,7 +161,7 @@ class Scenario(BaseScenario):
                     sensors=sensors,
                     shape=Sphere(radius=self.agent_radius),
                     u_range=[1, 1],  # Ranges for actions
-                    u_multiplier=[1, 1],  # Action multipliers
+                    u_multiplier=[3, 3],  # Action multipliers
                     dynamics=Holonomic(),  # If you go to its class you can see it has 2 actions: force_x, and force_y
                 )
             elif i < self.n_agents_holonomic + self.n_agents_diff_drive:
@@ -205,6 +209,7 @@ class Scenario(BaseScenario):
         ################
         self.tasks = []
         for i in range(self.n_tasks):
+            color = self.task_color
             task = Landmark(
                 name=f"goal_{i}",
                 collide=False,
@@ -305,12 +310,13 @@ class Scenario(BaseScenario):
 
     def observation(self, agent: Agent):
         obs = {
-            "obs_agents": torch.stack(
-                [agent.state.pos for agent in self.world.agents],
-                # dim=-1
-            ),
+            
             "obs_tasks": torch.stack(
                 [task.state.pos for task in self.tasks],
+                # dim=-1
+            ),
+            "obs_agents": torch.stack(
+                [agent.state.pos for agent in self.world.agents],
                 # dim=-1
             ),
             "obs_obstacles": torch.stack(
@@ -360,6 +366,15 @@ class Scenario(BaseScenario):
             for agent in self.world.agents
             if not isinstance(agent.dynamics, Holonomic)
         ]  # Plot the rotation for non-holonomic agents
+
+        # Task ranges
+        for target in self.tasks:
+            range_circle = rendering.make_circle(self.task_comp_range, filled=False)
+            xform = rendering.Transform()
+            xform.set_translation(*target.state.pos[env_index])
+            range_circle.add_attr(xform)
+            range_circle.set_color(*self.task_color.value)
+            geoms.append(range_circle)
 
         # Plot communication lines
         if self.comms_rendering_range > 0:

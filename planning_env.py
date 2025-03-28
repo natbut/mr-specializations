@@ -58,7 +58,7 @@ class VMASPlanningEnv(EnvBase):
         self.sim_obs = self.sim_env.reset()
         return TensorDict({"observation": self._build_obs_graph()}, device=self.device)
 
-    def _step(self, actions: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, Dict]:
+    def _step(self, actions: TensorDict) -> TensorDict:
         """
         Steps through the environment (IN PARALLEL):
         1. Use heuristic weights to plan agent trajectories.
@@ -67,7 +67,7 @@ class VMASPlanningEnv(EnvBase):
         """
         # Process actions (heuristic weights)
         # heuristic_weights = actions.view(self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
-        heuristic_weights = actions
+        heuristic_weights = actions["actions"]
         print(f"Heuristic Weights: \n{heuristic_weights}")
 
         # Execute and aggregate rewards
@@ -78,9 +78,9 @@ class VMASPlanningEnv(EnvBase):
             self._build_obs_graph()
             # Compute agent trajectories & get actions
             u_action = []
-            for agent in self.sim_env.agents:
-                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights, self.horizon-t)) # get next actions from agent controllers
-            print("U-ACTION:", u_action)
+            for i, agent in enumerate(self.sim_env.agents):
+                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights[i], self.horizon-t)) # get next actions from agent controllers
+            # print("U-ACTION:", u_action)
             self.sim_obs, rews, dones, info = self.sim_env.step(u_action)
             # print("Rewards:", rewards, "rews:", torch.stack(rews))
             rewards += torch.stack(rews)
@@ -125,10 +125,10 @@ class VMASPlanningEnv(EnvBase):
 
 
     def _build_obs_graph(self,
-                         node_dim=10,
-                         connectivity=4,
+                         node_dim=6,
+                         connectivity=8,
                          verbose=False
-                         ) -> Data:
+                         ) -> Batch:
         """
         Discretize type & pos based observations into a planning graph.
         Obs should be dict with "env_dims": (x, y), "NAME": (x,y), ...
@@ -154,7 +154,7 @@ class VMASPlanningEnv(EnvBase):
 
             node_rad = torch.max((max_dims - min_dims)/node_dim)
             
-            if verbose: print("Check entry", element_positions, "Max/Min:", max_dims, min_dims, "Rad:", node_rad)
+            if verbose: print("Element Positions", element_positions, "Max/Min:", max_dims, min_dims, "Rad:", node_rad)
 
             # Create a grid of node centers
             node_positions = []
@@ -173,19 +173,15 @@ class VMASPlanningEnv(EnvBase):
             if verbose: print(f"Env {i} Node positions: \n{node_positions} \nEnv {i} Node Indices: {node_indices}")
 
             # Compute binary feature vectors
-            features = torch.zeros((num_nodes, 3), device=self.device)  # [agent_presence, task_presence, obstacle_presence]
+            features = torch.zeros((num_nodes, len(element_positions)), device=self.device)  # [agent_presence, task_presence, obstacle_presence]
             
-            for j, feature_type in enumerate(['obs_agents', 'obs_tasks', 'obs_obstacles']):
-                feature_positions = []
-                for entity in global_obs_dict[feature_type]:
-                        feature_positions.append(entity[i])
-                # feature_positions = global_obs_dict[feature_type][i]  # Positions of the feature in this batch element
-                feature_positions = torch.stack(feature_positions)
-                
+            for j, feature_pos in enumerate(element_positions):
                 for k, node_pos in enumerate(node_positions):
-                    dists = torch.norm(feature_positions - node_pos, dim=1)
+                    # print("Feat pos:", feature_pos, " Node pos:", node_pos)
+                    dists = torch.norm(feature_pos - node_pos, dim=0)
                     if torch.any(dists < node_rad):
-                        features[k, j] = torch.sum(dists < node_rad)/len(feature_positions) # Normalize by num features
+                        # print(f"Feature {feature_pos} near node {k}: {node_pos} with dist: {dists}")
+                        features[k, j] = 1 #torch.sum(dists < node_rad) # Normalize by num features? /len(feature_positions)
 
             if verbose: print("Node features:\n", features)
 
