@@ -81,7 +81,10 @@ class PlanningAgent(Agent):
         super().__init__(name, shape, movable, rotatable, collide, density, mass, f_range, max_f, t_range, max_t, v_range, max_speed, color, alpha, obs_range, obs_noise, u_noise, u_range, u_multiplier, action_script, sensors, c_noise, silent, adversary, drag, linear_friction, angular_friction, gravity, collision_filter, render_action, dynamics, action_size, discrete_action_nvec)
 
 
-    def _compute_heuristics_val(self, cur_node_pos, node_pos, node_features, heuristic_weights, verbose = False):
+    def _compute_dist_heuristics_val(self, cur_node_pos, node_pos, node_features, heuristic_weights, verbose = False):
+        """
+        Computes euclidean distance heuristic from cur_node to each node in graph that contains non-zero features.
+        """
         total_val = 0
         for i, node_vec in enumerate(node_features):
             # Compute dist from cur_pos to node_pos; fill for each feature present at node
@@ -120,7 +123,7 @@ class PlanningAgent(Agent):
             
             # TODO Heuristic evaluation
             g_score[start_idx] = 0.0
-            f_score[start_idx] = g_score[start_idx] + self._compute_heuristics_val(graph.pos[start_idx],
+            f_score[start_idx] = g_score[start_idx] + self._compute_dist_heuristics_val(graph.pos[start_idx],
                                                                                    graph.pos,
                                                                                    graph.x,
                                                                                    heuristic_weights[i]
@@ -157,7 +160,7 @@ class PlanningAgent(Agent):
                         parents[neighbor] = current
                         g_score[neighbor] = tentative_g_score
                         # TODO heuristic evaluation
-                        f_score[neighbor] = g_score[neighbor] + self._compute_heuristics_val(graph.pos[neighbor],
+                        f_score[neighbor] = g_score[neighbor] + self._compute_dist_heuristics_val(graph.pos[neighbor],
                                                                                             graph.pos,
                                                                                             graph.x,
                                                                                             heuristic_weights[i]

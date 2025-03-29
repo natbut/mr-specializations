@@ -9,7 +9,6 @@ from vmas.simulator.scenario import BaseScenario
 from vmas import make_env
 from typing import Tuple, Dict
 
-
 class VMASPlanningEnv(EnvBase):
     def __init__(
             self, scenario: BaseScenario, 
