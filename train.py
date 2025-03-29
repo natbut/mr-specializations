@@ -39,6 +39,7 @@ from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 from tqdm import tqdm
 
+from torch_geometric.nn import Sequential, GATv2Conv, GCNConv
 
 def train_PPO(scenario):
     ### HYPERPARAMS ###
@@ -48,7 +49,8 @@ def train_PPO(scenario):
         if torch.cuda.is_available() and not is_fork
         else torch.device("cpu")
     )
-    num_cells = 256  # number of cells in each layer i.e. output dim.
+    in_channels = 2
+    batch_size = 4
     lr = 3e-4
     max_grad_norm = 1.0
     frames_per_batch = 1000
@@ -67,15 +69,59 @@ def train_PPO(scenario):
 
     ### DEFINE ENVIRONMENT ###
     env = VMASPlanningEnv(scenario,
-                          batch_size=(10,),
+                          batch_size=(batch_size,),
                           device=device
                           )
 
-    ### TODO DEFINE POLICY ###
+    ### TODO DEFINE ACTOR POLICY & POLICY MODULE ###
+    actor_net = Sequential(
+        'x, edge_index',
+        [
+            (GCNConv(in_channels, 64), 'x, edge_index -> x'),
+            nn.ReLU(inplace=True,),
+            (GCNConv(64, 64), 'x, edge_index -> x'),
+            nn.ReLU(inplace=True),
+            nn.Linear(64, 2 * env.action_spec.shape[-1]),
+            NormalParamExtractor(),
+        ]
+    )
 
+    policy_module = TensorDictModule(
+        actor_net, in_keys=["observation"], out_keys=["loc", "scale"]
+    )
+
+    policy_module = ProbabilisticActor(
+        module=policy_module,
+        spec=env.action_spec,
+        in_keys=["loc", "scale"],
+        distribution_class=TanhNormal,
+        distribution_kwargs={
+            "low": env.action_spec_unbatched.space.low,
+            "high": env.action_spec_unbatched.space.high,
+        },
+        return_log_prob=True,
+        # we'll need the log-prob for the numerator of the importance weights
+    )
 
     ### TODO DEFINE VALUE NET ###
+    value_net = Sequential(
+        'x, edge_index',
+        [
+            (GCNConv(in_channels, 64), 'x, edge_index -> x'),
+            nn.ReLU(inplace=True),
+            (GCNConv(64, 64), 'x, edge_index -> x'),
+            nn.ReLU(inplace=True),
+            nn.Linear(64, 1),
+        ]
+    )
     
+    value_module = ValueOperator(
+        module=value_net,
+        in_keys=["observation"],
+    )
+
+    print("Running policy:", policy_module(env.reset()))
+    print("Running value:", value_module(env.reset()))
 
     ### COLLECTOR ###
     collector = SyncDataCollector(
