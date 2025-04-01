@@ -13,11 +13,12 @@ class VMASPlanningEnv(EnvBase):
     def __init__(
             self, scenario: BaseScenario, 
             batch_size: int, 
-            device: str = "cpu", 
+            device: str = "cpu",
+            node_dim = 5,
             **kwargs
             ):
         # TODO Check kwargs passing
-        super().__init__(batch_size=batch_size, device=device)
+        super().__init__(batch_size=[batch_size], device=device)
 
         # VMAS Environment Configuration
         # TODO need batch_size worlds?
@@ -29,7 +30,8 @@ class VMASPlanningEnv(EnvBase):
                             device=self.device,
                             )
         self.horizon = 20  # Number of steps to execute per trajectory
-        self.render = True
+        self.node_dim = node_dim
+        self.render = False
         self.count = 0
         self.graph_batch = None
         self.sim_obs = None
@@ -37,52 +39,83 @@ class VMASPlanningEnv(EnvBase):
 
         # Define Observation & Action Specs
         self.observation_spec = Composite(
-            observation=Unbounded(shape=self.batch_size),
+            x=Unbounded(
+                shape=self.batch_size,
+                device=device
+                ),
+            edge_index=Unbounded(
+                shape=self.batch_size,
+                device=device
+            ),
             shape=self.batch_size,
+            device=device
         )
-        print(f"\nObservation Spec:\n{self.observation_spec}")
+        # print(f"\nObservation Spec:\n{self.observation_spec}")
 
+        n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
         self.action_spec = Bounded(
-            low=torch.zeros((self.batch_size[0], self.scenario.n_agents, self.scenario.n_tasks)),
-            high=torch.ones((self.batch_size[0], self.scenario.n_agents, self.scenario.n_tasks)),
-            shape=(self.batch_size[0], self.scenario.n_agents, self.scenario.n_tasks)
+            low=torch.zeros((self.batch_size[0],
+                             self.node_dim**2,
+                             n_features
+                             ),
+                            device=device
+                            ),
+            high=torch.ones((self.batch_size[0],
+                             self.node_dim**2,
+                             n_features
+                             ),
+                            device=device
+                            ),
+            shape=(self.batch_size[0], self.node_dim**2, n_features),
+            device=device
         )
-        print(f"\nAction (Weights) Spec:\n{self.action_spec}")
+        # print(f"\nAction (Weights) Spec:\n{self.action_spec}")
 
-        self.reward_spec = Unbounded(shape=(self.batch_size[0], self.scenario.n_agents))
-        print(f"\nReward Spec:\n{self.reward_spec}")
+        self.reward_spec = Unbounded(
+            shape=(self.batch_size[0], self.sim_env.n_agents),
+            device=device
+            )#, self.scenario.n_agents))
+        # print(f"\nReward Spec:\n{self.reward_spec}")
 
     def _reset(self, obs_tensordict=None) -> TensorDict:
         """Reset all VMAS worlds and return initial state."""
         self.sim_obs = self.sim_env.reset()
-        return TensorDict({"observation": self._build_obs_graph()}, device=self.device)
+        self._build_obs_graph(node_dim=self.node_dim)
+        out = TensorDict(
+            self.graph_obs,
+            device=self.device,
+            batch_size=self.batch_size
+            )
+        # print("Reset TDict:", out)
+        # print("Expanded:", [(x_i, edges_i) for x_i, edges_i in zip(self.graph_obs["x"], self.graph_obs["edge_index"])])
+        return out
 
     def _step(self, actions: TensorDict) -> TensorDict:
         """
-        Steps through the environment (IN PARALLEL):
+        Steps through the environment (IN PARALLEL...sort of):
         1. Use heuristic weights to plan agent trajectories.
         2. Execute the trajectories for the given horizon.
         3. Return next state, rewards, and termination status.
         """
         # Process actions (heuristic weights)
         # heuristic_weights = actions.view(self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
-        heuristic_weights = actions["actions"]
-        print(f"Heuristic Weights: \n{heuristic_weights}")
+        heuristic_weights = actions["action"] # NOTE THESE ARE WEIGHTS FOR EVERY NODE, BUT WE ONLY USE AGENT LOCS
+        # print(f"Heuristic Weights: \n{heuristic_weights}")
 
         # Execute and aggregate rewards
         rewards = torch.zeros((self.batch_size[0], self.sim_env.n_agents), device=self.device)
         frame_list = []
         for t in range(self.horizon):
             # Update planning graph (env is dynamic)
-            self._build_obs_graph()
+            self._build_obs_graph(node_dim=self.node_dim)
             # Compute agent trajectories & get actions
             u_action = []
             for i, agent in enumerate(self.sim_env.agents):
                 u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights[i], self.horizon-t)) # get next actions from agent controllers
             # print("U-ACTION:", u_action)
             self.sim_obs, rews, dones, info = self.sim_env.step(u_action)
-            # print("Rewards:", rewards, "rews:", torch.stack(rews))
-            rewards += torch.stack(rews)
+            # print("Rewards:", rewards, "rews:", torch.stack(rews).T)
+            rewards += torch.stack(rews).T
 
             if self.render:
                 frame = self.sim_env.render(
@@ -99,22 +132,30 @@ class VMASPlanningEnv(EnvBase):
             self.count += 1
 
         # Construct next state representation   
+        # next_state = TensorDict(
+        #     {"observation": self._build_obs_graph()},
+        #     device=self.device
+        # )
         next_state = TensorDict(
-            {"observation": self._build_obs_graph()},
-            device=self.device
+            self.graph_obs,
+            device=self.device,
+            batch_size=self.batch_size
         )
+
         rew_tdict = TensorDict(
             {"reward": rewards},
-            device=self.device
+            device=self.device,
+            batch_size=self.batch_size
         )
         done_tdict = TensorDict(
             {"done": self.scenario.done()}, # TODO check done compute
-            device=self.device
+            device=self.device,
+            batch_size=self.batch_size
         )
 
         # Should return next_state, rewards, done as tensordict
         next_state.update(rew_tdict).update(done_tdict) 
-        print("Next TDict:\n", next_state)
+        # print("Next TDict:\n", next_state)
         return next_state #, rewards, done, {}
 
     
@@ -124,8 +165,8 @@ class VMASPlanningEnv(EnvBase):
 
 
     def _build_obs_graph(self,
-                         node_dim=6,
-                         connectivity=8,
+                         node_dim=2,
+                         connectivity=4,
                          verbose=False
                          ) -> Batch:
         """
@@ -136,7 +177,10 @@ class VMASPlanningEnv(EnvBase):
         if verbose: print(f"BuildGraph Obs:\n {global_obs_dict}") # NOTE only need 1 obs if global
 
         all_graphs = []
-        
+        x_vec = []
+        edge_index_vec = []
+        edge_attr_vec = []
+        pos_vec = []
         for i in range(self.batch_size[0]):
             # Dynamically compute node_rad to allow fixed graph topology for varying problem sizes
             element_positions = []
@@ -210,11 +254,32 @@ class VMASPlanningEnv(EnvBase):
             if verbose: print("Edge attributes (distances):\n", edge_attrs)
 
             # Create a graph for this environment
-            graph = Data(x=features, edge_index=edge_index, edge_attr=edge_attrs, pos=node_positions)
+            graph = Data(x=features, edge_index=edge_index, edge_attr=edge_attrs, pos=node_positions).to(self.device)
+            # x_vec.append(features)
+            # edge_index_vec.append(edge_index)
+            # edge_attr_vec.append(edge_attrs)
+            # pos_vec.append(node_pos)
+
             all_graphs.append(graph)
         
         # Batch graphs together
         batched_graph = Batch.from_data_list(all_graphs)
         if verbose: print("Batched graph:", batched_graph)
         self.graph_batch = batched_graph # TODO maybe change where this is defined
+        # print("X", batched_graph["x"])
+
+        # print("BATCH X", batched_graph["x"])
+        # batch_x = torch.stack(x_vec)
+        # batch_edge_index = torch.stack(edge_index_vec)
+        # batch_edge_attr = torch.stack(edge_attr_vec)
+        # batch_pos = torch.stack(pos_vec)
+
+        self.graph_obs = {
+            "x": torch.stack([g["x"] for g in all_graphs]),
+            "edge_index": torch.stack([g["edge_index"] for g in all_graphs]),
+            # "edge_attr": torch.stack([g["edge_attr"] for g in all_graphs]),
+            # "pos": torch.stack([g["pos"] for g in all_graphs]),
+            # "batch": batched_graph.batch,
+        }
+
         return batched_graph
