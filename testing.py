@@ -11,9 +11,11 @@ if __name__ == "__main__":
 
     env = VMASPlanningEnv(
         scenario=Scenario(),
-        batch_size=(2,),
+        batch_size=2,
         device="cuda",
         )
+    
+    env.render = True
     
     # actions = torch.zeros((env.batch_size[0],
     #                       env.scenario.n_agents,
@@ -24,14 +26,15 @@ if __name__ == "__main__":
     actions = torch.tensor([[[1., 0., 0., 0., 0., 0.],
                             [1., 0., 0., 0., 0., 0.]],
 
-                            [[0., 1., 0., 0., 0., 0.],
-                            [0., 1., 0., 0., 0., 0.]]], device='cuda:0')
+                            [[0., 5., 5., 0., 0., 0.],
+                            [0., 5., 5., 0., 0., 0.]]], device='cuda:0')
     
     # Convert actions into a TensorDict
-    actions_tdict = TensorDict({"actions": actions}, batch_size=env.batch_size)
+    actions_tdict = TensorDict({"action": actions}, batch_size=env.batch_size)
     print("Actions:", actions_tdict)
 
     obs_graph = env.reset()
+    print("OBS", obs_graph)
     # print("\nReset Obs Graph:\n", obs_graph["graph"], "Num graphs:", obs_graph["graph"].num_graphs) #, "\n Graph 0:\n", obs_graph[0])
     # print("\nGraphs to Data list:\n", obs_graph["graph"].to_data_list())
 
