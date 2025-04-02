@@ -17,7 +17,13 @@ from vmas.simulator.dynamics.kinematic_bicycle import KinematicBicycle
 from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.sensors import Lidar
 
-from agents.planning_agent import PlanningAgent
+try:
+    from agents.planning_agent import PlanningAgent
+except:
+    import sys, os
+    sys.path.append(os.path.abspath(os.path.join('agents', '..')))
+    print("\n",sys.path)
+    from agents.planning_agent import PlanningAgent
 
 from vmas.simulator.utils import (
     ANGULAR_FRICTION,
@@ -39,7 +45,7 @@ class Scenario(BaseScenario):
         self.plot_grid = False  # You can use this to plot a grid under the rendering for visualization purposes
 
         self.n_agents_holonomic = kwargs.pop(
-            "n_agents_holonomic", 2
+            "n_agents_holonomic", 1
         )  # Number of agents with holonomic dynamics
         self.n_agents_diff_drive = kwargs.pop(
             "n_agents_diff_drive", 0
@@ -68,6 +74,10 @@ class Scenario(BaseScenario):
             "n_lidar_rays", 12
         )  # Number of LIDAR rays around the agent, each ray gives an observation between 0 and lidar_range
 
+        self._agents_per_task = kwargs.pop(
+            "agents_per_task", 1
+            )
+
         self.shared_rew = kwargs.pop(
             "shared_rew", False
         )  # Whether the agents get a global or local reward for going to their goals
@@ -75,16 +85,20 @@ class Scenario(BaseScenario):
         self.task_comp_range = kwargs.pop(
             "task_comp_range", 0.25
         )
+        self.tasks_respawn = kwargs.pop(
+            "tasks_respawn", True
+        )
         self.complete_task_coeff = kwargs.pop(
-            "task_reward", 1
+            "task_reward", 5
         )
         self.time_penalty = kwargs.pop(
             "time_penalty", -0.1
         )
-        
-        self._agents_per_task = kwargs.pop("agents_per_task", 1)
 
-        self.agent_radius = kwargs.pop("agent_radius", 0.1)
+        self.agent_radius = kwargs.pop(
+            "agent_radius", 0.1
+            )
+        
         self.min_distance_between_entities = (
             self.agent_radius * 2 + 0.05
         )  # Minimum distance between entities at spawning time
@@ -108,6 +122,8 @@ class Scenario(BaseScenario):
             drag=DRAG,  # Physics parameters
             linear_friction=LINEAR_FRICTION,  # Physics parameters
             angular_friction=ANGULAR_FRICTION,  # Physics parameters
+            x_semidim=self.world_spawning_x,
+            y_semidim=self.world_spawning_y
             # There are many more....
         )
 
@@ -252,17 +268,17 @@ class Scenario(BaseScenario):
             self.world,
             env_index,  # Pass the env_index so we only reset what needs resetting
             self.min_distance_between_entities,
-            x_bounds=(-self.world_spawning_x, self.world_spawning_x),
-            y_bounds=(-self.world_spawning_y, self.world_spawning_y),
+            x_bounds=(-self.world.x_semidim, self.world.x_semidim),
+            y_bounds=(-self.world.y_semidim, self.world.y_semidim),
         )
 
 
     def reward(self, agent: Agent):
         is_first = agent == self.world.agents[0]
+        is_last = agent == self.world.agents[-1]
 
         if is_first:
             # We can compute rewards when the first agent is called such that we do not have to recompute global components
-            
             self.time_rew = torch.full(
                 (self.world.batch_dim,),
                 self.time_penalty,
@@ -285,6 +301,39 @@ class Scenario(BaseScenario):
             self.shared_tasks_rew[:] = 0
             for a in self.world.agents:
                 self.shared_tasks_rew += self.agent_tasks_reward(a)
+        
+        # Respawn tasks
+        if is_last:
+            if self.tasks_respawn:
+                occupied_positions_agents = [self.agents_pos]
+                for i, task in enumerate(self.tasks):
+                    occupied_positions_tasks = [
+                                                    o.state.pos.unsqueeze(1)
+                                                    for o in self.tasks
+                                                    if o is not task
+                                                ]
+                    occupied_positions = torch.cat(
+                        occupied_positions_agents + occupied_positions_tasks,
+                        dim=1,
+                    )
+                    pos = ScenarioUtils.find_random_pos_for_entity(
+                        occupied_positions,
+                        env_index=None,
+                        world=self.world,
+                        min_dist_between_entities=self.min_distance_between_entities,
+                        x_bounds=(-self.world.x_semidim, self.world.x_semidim),
+                        y_bounds=(-self.world.y_semidim, self.world.y_semidim),
+                    )
+
+                    task.state.pos[self.completed_tasks[:, i]] = pos[
+                        self.completed_tasks[:, i]
+                    ].squeeze(1)
+            else:
+                self.all_time_covered_targets += self.completed_tasks
+                for i, task in enumerate(self.tasks):
+                    task.state.pos[self.completed_tasks[:, i]] = self.get_outside_pos(
+                        None
+                    )[self.completed_tasks[:, i]]
 
         tasks_reward = (
             self.shared_tasks_rew if self.shared_rew else agent.tasks_rew
@@ -347,7 +396,7 @@ class Scenario(BaseScenario):
 
     def done(self) -> Tensor:
         # print("Completed tasks:", self.completed_tasks)
-        return self.completed_tasks.any(dim=-1) #self.all_goal_reached
+        return self.completed_tasks.all(dim=-1) #self.all_goal_reached
 
     def info(self, agent: Agent) -> Dict[str, Tensor]:
         return {
