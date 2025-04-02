@@ -29,7 +29,8 @@ class VMASPlanningEnv(EnvBase):
                             self.batch_size[0],
                             device=self.device,
                             )
-        self.horizon = 20  # Number of steps to execute per trajectory
+        
+        self.horizon = 20  # Number of steps to execute per trajectory 
         self.node_dim = node_dim
         self.render = False
         self.count = 0
@@ -86,6 +87,7 @@ class VMASPlanningEnv(EnvBase):
             device=self.device,
             batch_size=self.batch_size
             )
+        out.set("step_count", torch.full(self.batch_size, 1))
         # print("Reset TDict:", out)
         # print("Expanded:", [(x_i, edges_i) for x_i, edges_i in zip(self.graph_obs["x"], self.graph_obs["edge_index"])])
         return out
@@ -111,7 +113,7 @@ class VMASPlanningEnv(EnvBase):
             # Compute agent trajectories & get actions
             u_action = []
             for i, agent in enumerate(self.sim_env.agents):
-                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights[i], self.horizon-t)) # get next actions from agent controllers
+                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights, self.horizon-t)) # get next actions from agent controllers
             # print("U-ACTION:", u_action)
             self.sim_obs, rews, dones, info = self.sim_env.step(u_action)
             # print("Rewards:", rewards, "rews:", torch.stack(rews).T)
@@ -132,16 +134,11 @@ class VMASPlanningEnv(EnvBase):
             self.count += 1
 
         # Construct next state representation   
-        # next_state = TensorDict(
-        #     {"observation": self._build_obs_graph()},
-        #     device=self.device
-        # )
         next_state = TensorDict(
             self.graph_obs,
             device=self.device,
             batch_size=self.batch_size
         )
-
         rew_tdict = TensorDict(
             {"reward": rewards},
             device=self.device,
@@ -152,6 +149,8 @@ class VMASPlanningEnv(EnvBase):
             device=self.device,
             batch_size=self.batch_size
         )
+
+        next_state.set("step_count", torch.full(self.batch_size, 1))
 
         # Should return next_state, rewards, done as tensordict
         next_state.update(rew_tdict).update(done_tdict) 
@@ -248,7 +247,7 @@ class VMASPlanningEnv(EnvBase):
                         dist = torch.norm(node_positions[node_id] - node_positions[neighbor_id])
                         edge_attrs.append(dist)
 
-            edge_index = torch.tensor(edge_list, dtype=torch.long, device=self.device).T  # Shape [2, num_edges] (COO)
+            edge_index = torch.tensor(edge_list, dtype=torch.int64, device=self.device).T  # Shape [2, num_edges] (COO)
             edge_attrs = torch.tensor(edge_attrs, dtype=torch.float, device=self.device)  # Shape [num_edges]
             if verbose: print("Edge index:\n", edge_index)
             if verbose: print("Edge attributes (distances):\n", edge_attrs)

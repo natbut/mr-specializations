@@ -188,7 +188,7 @@ class PlanningAgent(Agent):
 
         return all_traj
         
-    def get_control_action(self, graph_batch, heuristic_weights, horizon, verbose=False):
+    def get_control_action(self, graph_batch, heuristic_weights: torch.Tensor, horizon, verbose=False):
         """
         Get control action that makes best progress towards traj
 
@@ -200,6 +200,8 @@ class PlanningAgent(Agent):
         start_raw = self.state.pos
         dists = [graphs_list[i].pos - a_pos for i, a_pos in enumerate(start_raw)]
         start_node_idxs = [torch.argmin(torch.norm(d, dim=1)).item() for d in dists]
+
+        heuristic_weights = [heuristic_weights[i][idx] for i, idx, in enumerate(start_node_idxs)]
 
         # Make plan
         trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
@@ -213,11 +215,6 @@ class PlanningAgent(Agent):
         pos_diff = next_pos-cur_pos
 
         u_action = torch.where(pos_diff > 1.0, 1.0, pos_diff)
-        u_action = torch.where(pos_diff < -1.0, -1.0, pos_diff)
-        # act_type = torch.where(pos_diff > 0, 1.0, -1.0)
-        # act_id = torch.tensor([self.control_action_dict[str(key)] for key in act_type.tolist()]).unsqueeze(-1)
-        # print(f"Robot Env 0 actual loc: {start_raw[0]}, Current node id {trajs[0][0]}, Dest node id {next_node_idx[0]}, Dest loc {graphs_list[0].pos[next_node_idx[0]]}")
-
-        # print(f"Current pos:\n {cur_pos} \nNext pos:\n {next_pos} \nDiff:\n {pos_diff} \nAct Type:\n {act_type} \nAct ID:\n {act_id}")
+        u_action = torch.where(u_action < -1.0, -1.0, u_action)
 
         return u_action
