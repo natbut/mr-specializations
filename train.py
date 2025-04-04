@@ -2,13 +2,14 @@ import copy
 import multiprocessing
 import time
 from typing import Union
+import os
 
 import numpy as np
 import torch
 from moviepy import ImageSequenceClip
 from scenarios.SR_tasks import Scenario
 from vmas import make_env
-# from vmas.simulator.scenario import BaseScenario
+# from vmas.simulator.scenario import BaseScenarion 
 from planning_env import VMASPlanningEnv
 
 # TORCHRL
@@ -16,9 +17,10 @@ from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import torch
+from torch import nn
+
 from tensordict.nn import TensorDictModule
 from tensordict.nn.distributions import NormalParamExtractor
-from torch import nn
 
 from torchrl.collectors import SyncDataCollector, MultiSyncDataCollector
 from torchrl.data.replay_buffers import ReplayBuffer
@@ -41,8 +43,7 @@ from tqdm import tqdm
 
 from torch_geometric.nn import Sequential, GATv2Conv, GCNConv, global_mean_pool
 from torch_geometric.data import Batch, Data
-
-import torch
+from torch.distributions import Normal
 
 def compute_gae(tensordict, value_network, gamma=0.99, lmbda=0.95):
     """
@@ -58,7 +59,6 @@ def compute_gae(tensordict, value_network, gamma=0.99, lmbda=0.95):
         - Adds "advantage" and "value_target" fields to the tensordict.
     """
     device = tensordict.device
-    B = tensordict.batch_size[0]  # Batch size
 
     # Extract required tensors
     states = tensordict["x"]  # (B, 16, 6)
@@ -93,21 +93,22 @@ def compute_gae(tensordict, value_network, gamma=0.99, lmbda=0.95):
     return tensordict  # Updated with GAE advantage and value targets
 
 
-def clip_ppo_loss(subdata, critic, epsilon=0.2, gamma=0.99, val_coef=0.5, ent_coef=0.01):
+def clip_ppo_loss(subdata, critic, actor, epsilon=0.2, val_coef=0.5, ent_coef=0.01):
     """
     Compute the PPO-Clip loss.
 
     Args:
         subdata (TensorDict): A batch of sampled experience from replay buffer.
         critic (nn.Module): The critic network that estimates state values.
+        actor (ProbabilisticActor): The actor network for policy evaluation.
         epsilon (float): Clipping parameter for PPO.
-        gamma (float): Discount factor for rewards.
         val_coef (float): Weight for the critic loss.
         ent_coef (float): Weight for the entropy loss.
 
     Returns:
         dict: Loss values for policy, value function, and entropy.
     """
+    print(subdata)
     # Extract required data
     log_probs = subdata["sample_log_prob"]  # [B, num_agents]
     advantages = subdata["advantage"]  # [B, num_agents]
@@ -118,8 +119,16 @@ def clip_ppo_loss(subdata, critic, epsilon=0.2, gamma=0.99, val_coef=0.5, ent_co
     edge_index = subdata["edge_index"]  # Graph edges [B, 2, num_edges]
     values = critic(x, edge_index)  # Compute value estimates [B]
 
-    # Handle missing old_log_prob (initialize with sample_log_prob)
-    old_log_probs = subdata.get("old_log_prob", log_probs.detach())  # Use same log_probs if missing
+    # Compute old_log_probs using the actor network if not present
+    # TODO Trying to get feedback to actor net
+    if "old_log_prob" not in subdata.keys():
+        with torch.no_grad():
+            loc, scale = subdata["loc"], subdata["scale"]  # (B, 2, 6) 
+            dist = actor.distribution_class(loc, scale, **actor.distribution_kwargs)
+            old_log_probs = dist.log_prob(subdata["action"]).sum(-1, keepdim=True)
+            subdata.set("old_log_prob", old_log_probs)
+    else:
+        old_log_probs = subdata["old_log_prob"]
 
     # Compute importance sampling ratio
     ratio = torch.exp(log_probs - old_log_probs)  # π(θ) / π(θ_old)
@@ -155,17 +164,17 @@ def train_PPO(scenario):
         if torch.cuda.is_available() and not is_fork
         else torch.device("cpu")
     )
-    batch_size = 32 # num_envs
-    node_dim = 5
-    lr = 3e-4
+    batch_size = 16 # num_envs
+    node_dim = 4
+    lr = 3e-2
     max_grad_norm = 1.0
     # For a complete training, bring the number of frames up to 1M
-    frames_per_batch = 256 # training batch size
-    total_frames = 4096 # total frames collected
+    frames_per_batch = 64 # training batch size
+    total_frames = 10*1024 # total frames collected
 
     ### PPO PARAMS ###
-    sub_batch_size = 64 # 64 # cardinality of the sub-samples gathered from the current data in the inner loop
-    num_epochs = 10  # optimization steps per batch of data collected
+    sub_batch_size = 16  # 64 # cardinality of the sub-samples gathered from the current data in the inner loop
+    num_epochs = 8  # optimization steps per batch of data collected
     clip_epsilon = (
         0.2  # clip value for PPO loss: see the equation in the intro for more context.
     )
@@ -181,8 +190,8 @@ def train_PPO(scenario):
                           )
 
     ### DEFINE ACTOR POLICY & POLICY MODULE ###
-    hidden = 16
     in_channels = env.action_spec.shape[-1] # NOTE this is num of node features, which FOR NOW is equal to action shape
+    hidden = env.action_spec.shape[-1]
     actor_net = Sequential(
         'x, edge_index', 
         [
@@ -276,17 +285,17 @@ def train_PPO(scenario):
     ### REPLAY BUFFER ###
     replay_buffer = ReplayBuffer(
         storage=LazyTensorStorage(max_size=frames_per_batch),
-        sampler=SamplerWithoutReplacement(),
+        # sampler=SamplerWithoutReplacement(),
         # sampler=SliceSampler(num_slices=4, traj_key=("collector", "traj_ids"))
     )
 
     ### LOSS FUNCTION ###
-    # advantage_module = GAE(
-    #     gamma=gamma,
-    #     lmbda=lmbda,
-    #     value_network=value_module,
-    #     average_gae=True,
-    # )
+    advantage_module = GAE(
+        gamma=gamma,
+        lmbda=lmbda,
+        value_network=value_module,
+        average_gae=True,
+    )
 
     loss_module = ClipPPOLoss(
         actor_network=actor,
@@ -304,6 +313,12 @@ def train_PPO(scenario):
         optim, total_frames // frames_per_batch, 0.0
     )
 
+    # CONFIRMED: Both actor and critic params are included
+    for group in optim.param_groups:
+        for param in group['params']:
+            print(param.shape)
+    
+
     ### TRAINING LOOP ###
     logs = defaultdict(list)
     pbar = tqdm(total=total_frames)
@@ -311,6 +326,7 @@ def train_PPO(scenario):
 
     # We iterate over the collector until it reaches the total number of frames it was
     # designed to collect:
+    
     for i, tensordict_data in enumerate(collector):
         # we now have a batch of data to work with. Let's learn something from it.
         print("\n!! Running Training")
@@ -334,34 +350,61 @@ def train_PPO(scenario):
 
             for _ in range(frames_per_batch // sub_batch_size):
                 subdata = replay_buffer.sample(sub_batch_size)
-                loss_vals = clip_ppo_loss(subdata.to(device), value_net)
+                # loss_vals = loss_module(subdata.to(device))
+                loss_vals = clip_ppo_loss(subdata.to(device), value_net, actor)
                 # print("!!! Loss evaluation: ", loss_vals)
                 loss_value = (
                     loss_vals["loss_objective"]
                     + loss_vals["loss_critic"]
                     + loss_vals["loss_entropy"]
                 )
-
+                logs["loss_objective"].append(loss_vals["loss_objective"].item())
+                logs["loss_critic"].append(loss_vals["loss_critic"].item())
+                logs["loss_entropy"].append(loss_vals["loss_entropy"].item())
+                logs["total_loss"].append(loss_vals["total_loss"].item())
                 # Optimization: backward, grad clipping and optimization step
-                # print("!! Backprop loss ...")
+                print("!! Backprop loss ...")
                 loss_value.backward()
+                # for name, param in value_net.named_parameters():
+                #     if param.grad is None:
+                #         print(f"Value Net {name}: {param.grad}")
+                for name, param in actor.named_parameters():
+                    if param.grad is None:
+                        print(f"Actor Net {name}: {param.grad}")
+                    else:
+                        print(f"Actor Net {name}: {param.grad.shape}")
                 # this is not strictly mandatory but it's good practice to keep
                 # your gradient norm bounded
-                torch.nn.utils.clip_grad_norm_(loss_module.parameters(), max_grad_norm)
+                # torch.nn.utils.clip_grad_norm_(loss_module.parameters(), max_grad_norm)
                 optim.step()
                 optim.zero_grad()
+
 
         logs["reward"].append(tensordict_data["next", "reward"].mean().item())
         pbar.update(tensordict_data.numel())
         cum_reward_str = (
-            f"average reward={logs['reward'][-1]: 4.4f} (init={logs['reward'][0]: 4.4f})"
+            f"| Training average reward={logs['reward'][-1]: 4.4f} (init={logs['reward'][0]: 4.4f})"
         )
-        logs["step_count"].append(tensordict_data["step_count"].max().item())
-        stepcount_str = f"step count (max): {logs['step_count'][-1]}"
+        # logs["step_count"].append(tensordict_data["step_count"].max().item())
+        # stepcount_str = f"step count (max): {logs['step_count'][-1]}"
         logs["lr"].append(optim.param_groups[0]["lr"])
         lr_str = f"lr policy: {logs['lr'][-1]: 4.4f}"
         if i % 10 == 0:
+            # Save model checkpoints
+            checkpoint_path = f"checkpoints/checkpoint_step_{i}.pt"
+            os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+            torch.save({
+                'step': i,
+                'actor_state_dict': actor_net.state_dict(),
+                'value_state_dict': value_net.state_dict(),
+                'optimizer_state_dict': optim.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'logs': logs,
+            }, checkpoint_path)
+            print(f"Saved checkpoint to {checkpoint_path}")
+
             print("\n!! Running Evaluation")
+            env.render = True
             # We evaluate the policy once every 10 batches of data.
             # Evaluation is rather simple: execute the policy without exploration
             # (take the expected value of the action distribution) for a given
@@ -370,7 +413,6 @@ def train_PPO(scenario):
             # it will then execute this policy at each step.
             with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
                 # execute a rollout with the trained policy
-                env.render = True
                 eval_rollout = env.rollout(4, actor)
                 logs["eval reward"].append(eval_rollout["next", "reward"].mean().item())
                 logs["eval reward (sum)"].append(
@@ -380,11 +422,11 @@ def train_PPO(scenario):
                 eval_str = (
                     f"eval cumulative reward: {logs['eval reward (sum)'][-1]: 4.4f} "
                     f"(init: {logs['eval reward (sum)'][0]: 4.4f}), "
-                    f"eval step-count: {logs['eval step_count'][-1]}"
+                    # f"eval step-count: {logs['eval step_count'][-1]}"
                 )
                 del eval_rollout
-        env.render = False
-        pbar.set_description(", ".join([eval_str, cum_reward_str, stepcount_str, lr_str]))
+            env.render = False
+        pbar.set_description(", ".join([eval_str, cum_reward_str, lr_str])) #stepcount_str,
 
         # We're also using a learning rate scheduler. Like the gradient clipping,
         # this is a nice-to-have but nothing necessary for PPO to work.
@@ -397,8 +439,8 @@ def train_PPO(scenario):
     plt.plot(logs["reward"])
     plt.title("training rewards (average)")
     plt.subplot(2, 2, 2)
-    plt.plot(logs["step_count"])
-    plt.title("Max step count (training)")
+    plt.plot(logs["total_loss"])
+    plt.title("Total loss (training)")
     plt.subplot(2, 2, 3)
     plt.plot(logs["eval reward (sum)"])
     plt.title("Return (test)")
