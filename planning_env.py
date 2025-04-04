@@ -55,7 +55,7 @@ class VMASPlanningEnv(EnvBase):
 
         n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
         self.action_spec = Bounded(
-            low=torch.zeros((self.batch_size[0],
+            low=-torch.ones((self.batch_size[0],
                              self.node_dim**2,
                              n_features
                              ),
@@ -108,15 +108,17 @@ class VMASPlanningEnv(EnvBase):
         rewards = torch.zeros((self.batch_size[0], self.sim_env.n_agents), device=self.device)
         frame_list = []
         for t in range(self.horizon):
+            verbose = False
+            if t == 0: verbose = True
             # Update planning graph (env is dynamic)
             self._build_obs_graph(node_dim=self.node_dim)
             # Compute agent trajectories & get actions
             u_action = []
             for i, agent in enumerate(self.sim_env.agents):
-                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights, self.horizon-t)) # get next actions from agent controllers
+                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights, self.horizon-t, verbose)) # get next actions from agent controllers
             # print("U-ACTION:", u_action)
             self.sim_obs, rews, dones, info = self.sim_env.step(u_action)
-            # print("Rewards:", rewards, "rews:", torch.stack(rews).T)
+            # print("Rewards:", rewards.T, "rews:", rews)
             rewards += torch.stack(rews).T
 
             if self.render:
@@ -132,6 +134,13 @@ class VMASPlanningEnv(EnvBase):
             clip = ImageSequenceClip(frame_list, fps=fps)
             clip.write_gif(f"img/rollout_{self.count}.gif", fps=fps)
             self.count += 1
+
+        # NOTE We normalize rewards here [0,1], but we'll see if this helps
+        # TODO this returns nan if all values are equal
+        # TODO this is bad because it will return 1 for reward -0.99 and 0 for reward -0.999?
+        # rewards -= rewards.min(0, keepdim=True)[0]
+        # rewards /= rewards.max(0, keepdim=True)[0]
+        # print("Rewards:", rewards)
 
         # Construct next state representation   
         next_state = TensorDict(

@@ -7,12 +7,13 @@ from planning_env import VMASPlanningEnv
 from tensordict.tensordict import TensorDict
 
 if __name__ == "__main__":
-
+    node_dim = 4
 
     env = VMASPlanningEnv(
         scenario=Scenario(),
         batch_size=2,
         device="cuda",
+        node_dim=node_dim
         )
     
     env.render = True
@@ -23,11 +24,10 @@ if __name__ == "__main__":
     #                       device="cuda"
     #                       )  # Random actions
 
-    actions = torch.tensor([[[1., 0., 0., 0., 0., 0.],
-                            [1., 0., 0., 0., 0., 0.]],
-
-                            [[0., 5., 5., 0., 0., 0.],
-                            [0., 5., 5., 0., 0., 0.]]], device='cuda:0')
+    actions = torch.tensor([[1., 1., 1., 1., 1.] for _ in range(node_dim**2)], device="cuda")
+    actions = torch.stack([actions for _ in range(2)])\
+    
+    print("Actions:", actions)
     
     # Convert actions into a TensorDict
     actions_tdict = TensorDict({"action": actions}, batch_size=env.batch_size)

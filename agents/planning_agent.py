@@ -195,6 +195,7 @@ class PlanningAgent(Agent):
         May need to consider agent drive type
         """
         graphs_list = graph_batch.to_data_list()
+        # print("X:", graphs_list[0]["x"])
         
         # Get nearest starting node for planning
         start_raw = self.state.pos
@@ -202,10 +203,11 @@ class PlanningAgent(Agent):
         start_node_idxs = [torch.argmin(torch.norm(d, dim=1)).item() for d in dists]
 
         heuristic_weights = [heuristic_weights[i][idx] for i, idx, in enumerate(start_node_idxs)]
+        if verbose: print("\nWEIGHTS at env 0:", heuristic_weights[0])
 
         # Make plan
         trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
-        if verbose: print(f"Robot {self.name} at {start_node_idxs}\nTrajs:", trajs)
+        # if verbose: print(f"Robot {self.name} at {start_node_idxs}\nTrajs:", trajs)
 
         # Find best control action (given current pos/vel and traj)
         # Take action towards reaching next node in traj
