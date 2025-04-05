@@ -114,7 +114,6 @@ class PlanningAgent(Agent):
             start_idx = start_node_idxs[i]
             if verbose: print("start:", start_idx)
             num_nodes = len(graph.pos)
-
             # Init priority queue & score tracking
             open_set = [(0.0, start_idx)] # (f, id)
             parents = {}
@@ -196,14 +195,25 @@ class PlanningAgent(Agent):
         """
         graphs_list = graph_batch.to_data_list()
         # print("X:", graphs_list[0]["x"])
+        # print("Graphs list:", graphs_list)
         
         # Get nearest starting node for planning
         start_raw = self.state.pos
-        dists = [graphs_list[i].pos - a_pos for i, a_pos in enumerate(start_raw)]
+        # print("Start raw:", start_raw)
+        if self.batch_dim != 1:
+            dists = [graphs_list[i].pos - a_pos for i, a_pos in enumerate(start_raw)]
+        else:
+            dists = [pos - start_raw[0] for i, pos in enumerate(graphs_list[0].pos)]
+        # print("Before calc:", dists)
+        # print("Intermediate calc:",[torch.norm(d, dim=1) for d in dists])
         start_node_idxs = [torch.argmin(torch.norm(d, dim=1)).item() for d in dists]
 
-        heuristic_weights = [heuristic_weights[i][idx] for i, idx, in enumerate(start_node_idxs)]
-        if verbose: print("\nWEIGHTS at env 0:", heuristic_weights[0])
+        
+        # if verbose: print("\nWEIGHTS:", heuristic_weights)
+        if self.batch_dim != 1:
+            heuristic_weights = [heuristic_weights[i][idx] for i, idx, in enumerate(start_node_idxs)]
+        else:
+            heuristic_weights = [heuristic_weights[i] for i, idx, in enumerate(start_node_idxs)]
 
         # Make plan
         trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
@@ -213,7 +223,10 @@ class PlanningAgent(Agent):
         # Take action towards reaching next node in traj
         next_node_idx = [traj[1] for traj in trajs] # test commanding to node 0 [0 for traj in trajs]
         cur_pos = self.state.pos
-        next_pos = torch.stack([graph.pos[next_node_idx[i]] for i, graph in enumerate(graphs_list)])
+        if self.batch_dim != 1:
+            next_pos = torch.stack([graph.pos[next_node_idx[i]] for i, graph in enumerate(graphs_list)])
+        else:
+            next_pos = graphs_list[0].pos[next_node_idx[0]]
         pos_diff = next_pos-cur_pos
 
         u_action = torch.where(pos_diff > 1.0, 1.0, pos_diff)
