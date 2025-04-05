@@ -6,6 +6,7 @@ import typing
 from typing import Dict, List
 
 import torch
+import numpy as np
 
 from torch import Tensor
 
@@ -66,6 +67,10 @@ class Scenario(BaseScenario):
             "world_spawning_y", 1
         )  # Y-coordinate limit for entities spawning
 
+        self.static_env = kwargs.pop(
+            "static_env", True
+        )
+
         self.comms_rendering_range = kwargs.pop(
             "comms_rendering_range", 0
         )  # Used for rendering communication lines between agents (just visual)
@@ -83,13 +88,13 @@ class Scenario(BaseScenario):
         )  # Whether the agents get a global or local reward for going to their goals
         
         self.task_comp_range = kwargs.pop(
-            "task_comp_range", 0.25
+            "task_comp_range", 0.35
         )
         self.tasks_respawn = kwargs.pop(
-            "tasks_respawn", True
+            "tasks_respawn", False
         )
         self.complete_task_coeff = kwargs.pop(
-            "task_reward", 5
+            "task_reward", 1
         )
         self.time_penalty = kwargs.pop(
             "time_penalty", -0.1
@@ -146,6 +151,7 @@ class Scenario(BaseScenario):
         self.agent_color = Color.BLUE
         self.task_color = Color.ORANGE
 
+        self.agents = []
         for i in range(self.n_agents):
             color = self.agent_color
             # color = (
@@ -218,6 +224,7 @@ class Scenario(BaseScenario):
             agent.tasks_rew = torch.zeros(batch_dim, device=device)
 
             world.add_agent(agent)  # Add the agent to the world
+            self.agents.append(agent)
 
 
         ################
@@ -271,6 +278,43 @@ class Scenario(BaseScenario):
             x_bounds=(-self.world.x_semidim, self.world.x_semidim),
             y_bounds=(-self.world.y_semidim, self.world.y_semidim),
         )
+
+        if self.static_env:
+            for i, agent in enumerate(self.agents):
+                agent.set_pos(
+                    torch.tensor(
+                        [0, 0],
+                        dtype=torch.float32,
+                        device=self.world.device,
+                    ),
+                    batch_index=env_index,
+                )
+
+            for i, task in enumerate(self.tasks):
+                i += 1
+                loc = 0.35*i*(-1)**(i)
+                coords = [-loc, loc]
+                task.set_pos(
+                    torch.tensor(
+                        [coords[0], coords[1]],
+                        dtype=torch.float32,
+                        device=self.world.device,
+                    ),
+                    batch_index=env_index,
+                )
+
+            for i, obs in enumerate(self.obstacles):
+                i += 1
+                loc = 0.35*i*(-1)**(i)
+                coords = [-loc, -loc]
+                obs.set_pos(
+                    torch.tensor(
+                        [coords[0], coords[1]],
+                        dtype=torch.float32,
+                        device=self.world.device,
+                    ),
+                    batch_index=env_index,
+                )
 
 
     def reward(self, agent: Agent):
@@ -328,12 +372,12 @@ class Scenario(BaseScenario):
                     task.state.pos[self.completed_tasks[:, i]] = pos[
                         self.completed_tasks[:, i]
                     ].squeeze(1)
-            else:
-                self.all_time_covered_targets += self.completed_tasks
-                for i, task in enumerate(self.tasks):
-                    task.state.pos[self.completed_tasks[:, i]] = self.get_outside_pos(
-                        None
-                    )[self.completed_tasks[:, i]]
+            # else:
+                # self.all_time_covered_targets += self.completed_tasks
+            #     for i, task in enumerate(self.tasks):
+            #         task.state.pos[self.completed_tasks[:, i]] = self.get_outside_pos(
+            #             None
+            #         )[self.completed_tasks[:, i]]
 
         tasks_reward = (
             self.shared_tasks_rew if self.shared_rew else agent.tasks_rew
@@ -396,7 +440,7 @@ class Scenario(BaseScenario):
 
     def done(self) -> Tensor:
         # print("Completed tasks:", self.completed_tasks)
-        return self.completed_tasks.all(dim=-1) #self.all_goal_reached
+        return self.completed_tasks.any(dim=-1) #self.all_goal_reached
 
     def info(self, agent: Agent) -> Dict[str, Tensor]:
         return {
