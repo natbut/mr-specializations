@@ -32,7 +32,8 @@ from torchrl.envs import (
     ObservationNorm,
     StepCounter,
     TransformedEnv,
-    EnvBase
+    EnvBase,
+    ParallelEnv
 )
 from torchrl.envs.libs.gym import GymEnv
 from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
@@ -40,7 +41,6 @@ from torchrl.modules import ProbabilisticActor, TanhNormal, ValueOperator
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 from tqdm import tqdm
-
 
 
 def train_PPO(scenario):
@@ -54,7 +54,7 @@ def train_PPO(scenario):
     num_cells = 16
     batch_size = None # num_envs
     node_dim = 4
-    lr = 3e-2
+    lr = 3e-4
     max_grad_norm = 1.0
     # For a complete training, bring the number of frames up to 1M
     frames_per_batch = 64 # training batch size
@@ -62,7 +62,7 @@ def train_PPO(scenario):
 
     ### PPO PARAMS ###
     sub_batch_size = 16  # 64 # cardinality of the sub-samples gathered from the current data in the inner loop
-    num_epochs = 8  # optimization steps per batch of data collected
+    num_epochs = 16  # optimization steps per batch of data collected
     clip_epsilon = (
         0.2  # clip value for PPO loss: see the equation in the intro for more context.
     )
@@ -72,7 +72,7 @@ def train_PPO(scenario):
 
     ### DEFINE ENVIRONMENT ###
     base_env = VMASPlanningEnv(scenario,
-                          batch_size=batch_size,
+                          num_envs=batch_size,
                           device=device,
                           node_dim=node_dim
                           )
@@ -81,21 +81,28 @@ def train_PPO(scenario):
         base_env,
         Compose(
             # normalize observations
-            ObservationNorm(in_keys=["observation"]),
+            ObservationNorm(in_keys=["x"]), # Change to "observation"
             DoubleToFloat(),
             StepCounter(),
         ),
+        device=device
     )
+
+    # env = ParallelEnv(
+    #     num_envs=2,
+    #     create_env_fn=base_env,
+    #     device=device
+    # )
 
     env.transform[0].init_stats(num_iter=2, reduce_dim=0, cat_dim=0)
 
     # Evaluate environment initialization
-    print("normalization constant shape:", env.transform[0].loc.shape)
+    print("normalization constant shape:\n", env.transform[0].loc.shape)
 
-    print("observation_spec:", env.observation_spec)
-    print("reward_spec:", env.reward_spec)
-    print("input_spec:", env.input_spec)
-    print("action_spec (as defined by input_spec):", env.action_spec)
+    print("observation_spec:\n", env.observation_spec)
+    print("reward_spec:\n", env.reward_spec)
+    print("input_spec:\n", env.input_spec)
+    print("action_spec (as defined by input_spec):\n", env.action_spec)
 
     check_env_specs(env)
 
@@ -106,7 +113,7 @@ def train_PPO(scenario):
     ### DEFINE ACTOR POLICY & POLICY MODULE ###
 
     actor_net = nn.Sequential(
-        nn.LazyLinear(num_cells, device=device),
+        nn.LazyLinear(2*num_cells, device=device),
         nn.Tanh(),
         nn.LazyLinear(num_cells, device=device),
         nn.Tanh(),
@@ -117,10 +124,10 @@ def train_PPO(scenario):
     )
 
     policy_module = TensorDictModule(
-        actor_net, in_keys=["observation"], out_keys=["loc", "scale"]
+        actor_net, in_keys=["x"], out_keys=["loc", "scale"]
     )
 
-    policy_module = ProbabilisticActor(
+    policy_module = ProbabilisticActor( # Actions sampled from dist during exploration
         module=policy_module,
         spec=env.action_spec,
         in_keys=["loc", "scale"],
@@ -135,7 +142,8 @@ def train_PPO(scenario):
 
 
     value_net = nn.Sequential(
-        nn.LazyLinear(num_cells, device=device),
+
+        nn.LazyLinear(2*num_cells, device=device),
         nn.Tanh(),
         nn.LazyLinear(num_cells, device=device),
         nn.Tanh(),
@@ -146,11 +154,11 @@ def train_PPO(scenario):
 
     value_module = ValueOperator(
         module=value_net,
-        in_keys=["observation"],
+        in_keys=["x"],
     )
 
     print("Running policy:", policy_module(env.reset()))
-    print("Running value:", value_module(env.reset()))
+    print("Running value:", value_module(env.reset())) # NOTE leave this in to init lazy modules
 
     collector = SyncDataCollector(
         env,
@@ -192,9 +200,10 @@ def train_PPO(scenario):
     pbar = tqdm(total=total_frames)
     eval_str = ""
 
+    # env.base_env.render = True
+
     # We iterate over the collector until it reaches the total number of frames it was
     # designed to collect:
-    
     for i, tensordict_data in enumerate(collector):
         # we now have a batch of data to work with. Let's learn something from it.
         print("\n!! Running Training")
@@ -204,7 +213,7 @@ def train_PPO(scenario):
             # We re-compute it at each epoch as its value depends on the value
             # network which is updated in the inner loop.
 
-            print("!! TDict Data:\n", tensordict_data)
+            # print("!! TDict Data:\n", tensordict_data)
             # Compute advantage values and add to tdict
             advantage_module(tensordict_data)
             
@@ -215,7 +224,6 @@ def train_PPO(scenario):
             for _ in range(frames_per_batch // sub_batch_size):
                 subdata = replay_buffer.sample(sub_batch_size)
                 loss_vals = loss_module(subdata.to(device))
-                # print("!!! Loss evaluation: ", loss_vals)
                 loss_value = (
                     loss_vals["loss_objective"]
                     + loss_vals["loss_critic"]
@@ -224,18 +232,8 @@ def train_PPO(scenario):
                 logs["loss_objective"].append(loss_vals["loss_objective"].item())
                 logs["loss_critic"].append(loss_vals["loss_critic"].item())
                 logs["loss_entropy"].append(loss_vals["loss_entropy"].item())
-                logs["total_loss"].append(loss_vals["total_loss"].item())
                 # Optimization: backward, grad clipping and optimization step
-                print("!! Backprop loss ...")
                 loss_value.backward()
-                # for name, param in value_net.named_parameters():
-                #     if param.grad is None:
-                #         print(f"Value Net {name}: {param.grad}")
-                for name, param in actor_net.named_parameters():
-                    if param.grad is None:
-                        print(f"Actor Net {name}: {param.grad}")
-                    else:
-                        print(f"Actor Net {name}: {param.grad.shape}")
                 # this is not strictly mandatory but it's good practice to keep
                 # your gradient norm bounded
                 torch.nn.utils.clip_grad_norm_(loss_module.parameters(), max_grad_norm)
@@ -267,7 +265,7 @@ def train_PPO(scenario):
             print(f"Saved checkpoint to {checkpoint_path}")
 
             print("\n!! Running Evaluation")
-            env.render = True
+            env.base_env.render = True
             # We evaluate the policy once every 10 batches of data.
             # Evaluation is rather simple: execute the policy without exploration
             # (take the expected value of the action distribution) for a given
@@ -276,7 +274,7 @@ def train_PPO(scenario):
             # it will then execute this policy at each step.
             with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
                 # execute a rollout with the trained policy
-                eval_rollout = env.rollout(4, policy_module)
+                eval_rollout = env.rollout(2, policy_module)
                 logs["eval reward"].append(eval_rollout["next", "reward"].mean().item())
                 logs["eval reward (sum)"].append(
                     eval_rollout["next", "reward"].sum().item()
@@ -288,7 +286,7 @@ def train_PPO(scenario):
                     # f"eval step-count: {logs['eval step_count'][-1]}"
                 )
                 del eval_rollout
-            env.render = False
+            env.base_env.render = False
         pbar.set_description(", ".join([eval_str, cum_reward_str, lr_str])) #stepcount_str,
 
         # We're also using a learning rate scheduler. Like the gradient clipping,
@@ -302,14 +300,14 @@ def train_PPO(scenario):
     plt.plot(logs["reward"])
     plt.title("training rewards (average)")
     plt.subplot(2, 2, 2)
-    plt.plot(logs["total_loss"])
-    plt.title("Total loss (training)")
+    plt.plot(logs["loss_objective"])
+    plt.title("Obj loss (training)")
     plt.subplot(2, 2, 3)
     plt.plot(logs["eval reward (sum)"])
     plt.title("Return (test)")
     plt.subplot(2, 2, 4)
-    plt.plot(logs["eval step_count"])
-    plt.title("Max step count (test)")
+    plt.plot(logs["loss_critic"])
+    plt.title("Critic loss (training)")
     plt.show()
 
 

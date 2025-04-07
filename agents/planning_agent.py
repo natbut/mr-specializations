@@ -52,6 +52,7 @@ class PlanningAgent(Agent):
         ):
         
         self.obs = []
+        self.trajs = []
         self.heuristic_funcs = heuristic_funcs
         self.sim_velocity = sim_velocity
         # self.control_action_dict = {0: [0.0,0.0],
@@ -86,12 +87,13 @@ class PlanningAgent(Agent):
         Computes euclidean distance heuristic from cur_node to each node in graph that contains non-zero features.
         """
         total_val = 0
-        for i, node_vec in enumerate(node_features):
+        for i, node_vec in enumerate(node_features): #x
             # Compute dist from cur_pos to node_pos; fill for each feature present at node
             h_vec = torch.where(node_vec == 1, torch.norm(node_pos[i]-cur_node_pos), 0)
             if verbose: print(f"Heuristic eval for {node_vec}: {h_vec}")
 
             # Sum weighted heuristics
+            # print("Heuristic weights:", heuristic_weights)
             h_val = torch.dot(heuristic_weights, h_vec)
             if verbose: print("!!! VAL:", h_val, "for weights", heuristic_weights)
             total_val += h_val
@@ -125,7 +127,7 @@ class PlanningAgent(Agent):
             f_score[start_idx] = g_score[start_idx] + self._compute_dist_heuristics_val(graph.pos[start_idx],
                                                                                    graph.pos,
                                                                                    graph.x,
-                                                                                   heuristic_weights[i]
+                                                                                   heuristic_weights#[i]
                                                                                    )
 
             count = 0
@@ -162,7 +164,7 @@ class PlanningAgent(Agent):
                         f_score[neighbor] = g_score[neighbor] + self._compute_dist_heuristics_val(graph.pos[neighbor],
                                                                                             graph.pos,
                                                                                             graph.x,
-                                                                                            heuristic_weights[i]
+                                                                                            heuristic_weights#[i]
                                                                                             )
 
                         if neighbor not in [n[1] for n in open_set]:
@@ -203,25 +205,39 @@ class PlanningAgent(Agent):
         if self.batch_dim != 1:
             dists = [graphs_list[i].pos - a_pos for i, a_pos in enumerate(start_raw)]
         else:
-            dists = [pos - start_raw[0] for i, pos in enumerate(graphs_list[0].pos)]
+            dists = [graphs_list[0].pos - a_pos for i, a_pos in enumerate(start_raw)]
         # print("Before calc:", dists)
-        # print("Intermediate calc:",[torch.norm(d, dim=1) for d in dists])
-        start_node_idxs = [torch.argmin(torch.norm(d, dim=1)).item() for d in dists]
+        # print("Intermediate calc:", [torch.linalg.norm(d, dim=1) for d in dists[0]])
+        norm_dists = [torch.norm(d, dim=1) for d in dists[0]]
+        start_node_idxs = [torch.argmin(torch.stack(norm_dists)).item()]
+        # print("Start node idxs:", start_node_idxs)
 
         
+        # if self.batch_dim == 1:
+        #     # heuristic_weights = [heuristic_weights[i][idx] for i, idx, in enumerate(start_node_idxs)]
+        #     heuristic_weights = [heuristic_weights]
+        # else:
+            # heuristic_weights = [heuristic_weights[i] for i, idx, in enumerate(start_node_idxs)]
+
+            
         # if verbose: print("\nWEIGHTS:", heuristic_weights)
-        if self.batch_dim != 1:
-            heuristic_weights = [heuristic_weights[i][idx] for i, idx, in enumerate(start_node_idxs)]
-        else:
-            heuristic_weights = [heuristic_weights[i] for i, idx, in enumerate(start_node_idxs)]
 
         # Make plan
-        trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
-        # if verbose: print(f"Robot {self.name} at {start_node_idxs}\nTrajs:", trajs)
+        if self.trajs == []:
+            self.trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
+        else:
+            # print("Plan exists, following:", self.trajs)
+            for i, traj in enumerate(self.trajs):
+                if traj == []:
+                    self.trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
+                if start_node_idxs[i] == traj[1] and norm_dists[start_node_idxs[i]] < 0.1:
+                    # print(f"NODE {start_node_idxs[i]} REACHED; remaining traj: {traj[1:]}")
+                    self.trajs[i] = traj[1:]
+                
 
         # Find best control action (given current pos/vel and traj)
         # Take action towards reaching next node in traj
-        next_node_idx = [traj[1] for traj in trajs] # test commanding to node 0 [0 for traj in trajs]
+        next_node_idx = [traj[1] for traj in self.trajs] # test commanding to node 0 [0 for traj in trajs]
         cur_pos = self.state.pos
         if self.batch_dim != 1:
             next_pos = torch.stack([graph.pos[next_node_idx[i]] for i, graph in enumerate(graphs_list)])

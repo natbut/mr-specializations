@@ -68,7 +68,7 @@ class Scenario(BaseScenario):
         )  # Y-coordinate limit for entities spawning
 
         self.static_env = kwargs.pop(
-            "static_env", True
+            "static_env", False
         )
 
         self.comms_rendering_range = kwargs.pop(
