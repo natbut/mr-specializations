@@ -3,18 +3,36 @@ import torch
 from torchrl.data import CompositeSpec, BoundedTensorSpec, Unbounded
 
 from scenarios.SR_tasks import Scenario
-from planning_env import VMASPlanningEnv
+from planning_env_unBatched import VMASPlanningEnv
 from tensordict.tensordict import TensorDict
+from torchrl.envs import (
+    Compose,
+    DoubleToFloat,
+    ObservationNorm,
+    StepCounter,
+    TransformedEnv,
+    EnvBase
+)
 
 if __name__ == "__main__":
     node_dim = 4
+    batch_size = None 
 
-    env = VMASPlanningEnv(
-        scenario=Scenario(),
-        batch_size=2,
-        device="cuda",
-        node_dim=node_dim
-        )
+    env = VMASPlanningEnv(Scenario(),
+                                num_envs=batch_size,
+                                device="cuda",
+                                node_dim=node_dim
+                                )
+    
+    # env = TransformedEnv(
+    #     base_env,
+    #     Compose(
+    #         # normalize observations
+    #         ObservationNorm(in_keys=["x"]), # Change to "observation"
+    #         DoubleToFloat(),
+    #         StepCounter(),
+    #     ),
+    # )
     
     env.render = True
     
@@ -24,8 +42,8 @@ if __name__ == "__main__":
     #                       device="cuda"
     #                       )  # Random actions
 
-    actions = torch.tensor([[1., 1., 1., 1., 1.] for _ in range(node_dim**2)], device="cuda")
-    actions = torch.stack([actions for _ in range(2)])\
+    actions = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0], device="cuda")
+    # actions = torch.stack([actions for _ in range(2)])\
     
     print("Actions:", actions)
     
@@ -38,7 +56,7 @@ if __name__ == "__main__":
     # print("\nReset Obs Graph:\n", obs_graph["graph"], "Num graphs:", obs_graph["graph"].num_graphs) #, "\n Graph 0:\n", obs_graph[0])
     # print("\nGraphs to Data list:\n", obs_graph["graph"].to_data_list())
 
-    for _ in range(10):
+    for _ in range(6):
         next_tdict= env.step(actions_tdict)
 
     print("ENV STEP RETURN:", next_tdict)

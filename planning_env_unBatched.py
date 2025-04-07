@@ -89,7 +89,7 @@ from typing import Tuple, Dict
 class VMASPlanningEnv(EnvBase):
     def __init__(
             self, scenario: BaseScenario, 
-            batch_size: int, 
+            num_envs: int, 
             device: str = "cpu",
             node_dim = 5,
             **kwargs
@@ -97,7 +97,7 @@ class VMASPlanningEnv(EnvBase):
         
         self.scenario = scenario
         # TODO Check kwargs passing
-        if batch_size is None:
+        if num_envs is None:
             super().__init__(batch_size=[], device=device)
             # VMAS Environment Configuration
             self.sim_env = make_env(scenario=self.scenario,
@@ -105,7 +105,7 @@ class VMASPlanningEnv(EnvBase):
                                 device=self.device,
                                 )
         else:
-            super().__init__(batch_size=[batch_size], device=device)
+            super().__init__(batch_size=[num_envs], device=device)
             # VMAS Environment Configuration
             self.sim_env = make_env(scenario=self.scenario,
                                 num_envs=self.batch_size[0],
@@ -119,15 +119,20 @@ class VMASPlanningEnv(EnvBase):
         self.count = 0
         self.graph_batch = None
         self.sim_obs = None
+        connectivity=4
+
+        n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
 
         # Define Observation & Action Specs
         self.observation_spec = Composite(
             x=Unbounded(
-                shape=(),
+                shape=(node_dim**2 * n_features),
+                dtype=torch.float32,
                 device=device
                 ),
             edge_index=Unbounded(
-                shape=(),
+                shape=(2, (node_dim**2)*connectivity-node_dim**2),
+                dtype=torch.int64,
                 device=device
             ),
             shape=(),
@@ -135,21 +140,20 @@ class VMASPlanningEnv(EnvBase):
         )
         # print(f"\nObservation Spec:\n{self.observation_spec}")
 
-        n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
         self.action_spec = Bounded(
             low=-torch.ones((
-                             self.node_dim**2,
+                            #  self.node_dim**2,
                              n_features
                              ),
                             device=device
                             ),
             high=torch.ones((
-                             self.node_dim**2,
+                            #  self.node_dim**2,
                              n_features
                              ),
                             device=device
                             ),
-            shape=(self.node_dim**2, n_features),
+            shape=(n_features), # self.node_dim**2, 
             device=device
         )
         # print(f"\nAction (Weights) Spec:\n{self.action_spec}")
@@ -159,6 +163,8 @@ class VMASPlanningEnv(EnvBase):
             device=device
             )#, self.scenario.n_agents))
         # print(f"\nReward Spec:\n{self.reward_spec}")
+
+        self.heuristic_softmax = torch.nn.Softmax(dim=-1)
 
     def _reset(self, obs_tensordict=None) -> TensorDict:
         """Reset all VMAS worlds and return initial state."""
@@ -185,15 +191,18 @@ class VMASPlanningEnv(EnvBase):
         # heuristic_weights = actions.view(self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
         heuristic_weights = actions["action"] # NOTE THESE ARE WEIGHTS FOR EVERY NODE, BUT WE ONLY USE AGENT LOCS
         # print(f"Heuristic Weights: \n{heuristic_weights}")
+        # heuristic_weights = self.heuristic_softmax(heuristic_weights) # Normalize weights to sum to 1 
 
         # Execute and aggregate rewards
         rewards = torch.zeros((self.sim_env.n_agents), device=self.device)
         frame_list = []
+        # Update planning graph (assuming env is dynamic)
+        self._build_obs_graph(node_dim=self.node_dim) # TODO for more dynamic envs, update this more frequently (in below loop)
+        for agent in self.sim_env.agents: # Reset agent trajectories
+            agent.trajs = []
         for t in range(self.horizon):
             verbose = False
-            if t == 0: verbose = True
-            # Update planning graph (env is dynamic)
-            self._build_obs_graph(node_dim=self.node_dim)
+            # if t == 0: verbose = True
             # Compute agent trajectories & get actions
             u_action = []
             for i, agent in enumerate(self.sim_env.agents):
@@ -269,9 +278,9 @@ class VMASPlanningEnv(EnvBase):
         min_dims = torch.min(element_positions, dim=0).values
         max_dims = torch.max(element_positions, dim=0).values
 
-        node_rad = torch.max((max_dims - min_dims)/node_dim)
+        cell_dim = 1.001*((max_dims - min_dims)/node_dim) #torch.max
         
-        if verbose: print("Element Positions", element_positions, "Max/Min:", max_dims, min_dims, "Rad:", node_rad)
+        if verbose: print("Element Positions", element_positions, "Max/Min:", max_dims, min_dims, "Cell Dim:", cell_dim)
 
         # Create a grid of node centers
         node_positions = []
@@ -279,7 +288,7 @@ class VMASPlanningEnv(EnvBase):
         index = 0
         for x_idx in range(node_dim):
             for y_idx in range(node_dim):
-                node_pos = min_dims + node_rad*(torch.tensor((x_idx+0.5, y_idx+0.5), device=self.device))
+                node_pos = min_dims + cell_dim*(torch.tensor((x_idx+0.5, y_idx+0.5), device=self.device))
                 node_positions.append(node_pos)
                 node_indices[(x_idx, y_idx)] = index
                 index += 1
@@ -289,16 +298,18 @@ class VMASPlanningEnv(EnvBase):
         
         if verbose: print(f"Env Node positions: \n{node_positions} \nEnv Node Indices: {node_indices}")
 
-        # Compute binary feature vectors
-        features = torch.zeros((num_nodes, len(element_positions)), device=self.device)  # [agent_presence, task_presence, obstacle_presence]
+        # Compute binary feature vectors using square-shaped cells
+        features = torch.zeros((num_nodes, len(element_positions)), dtype=torch.float32, device=self.device)  # [agent_presence, task_presence, obstacle_presence]
         
         for j, feature_pos in enumerate(element_positions):
             for k, node_pos in enumerate(node_positions):
-                # print("Feat pos:", feature_pos, " Node pos:", node_pos)
-                dists = torch.norm(feature_pos - node_pos, dim=0)
-                if torch.any(dists < node_rad):
-                    # print(f"Feature {feature_pos} near node {k}: {node_pos} with dist: {dists}")
-                    features[k, j] = 1 #torch.sum(dists < node_rad) # Normalize by num features? /len(feature_positions)
+                # Check if the feature is within the square cell centered at the node
+                within_x = torch.abs(feature_pos[0][0] - node_pos[0][0]) <= cell_dim[0][0] / 2
+                within_y = torch.abs(feature_pos[0][1] - node_pos[0][1]) <= cell_dim[0][1] / 2
+                if within_x and within_y:
+                    if verbose:
+                        print(f"Feature {feature_pos} within square cell of node {k}: {node_pos}")
+                    features[k, j] = 1
 
         if verbose: print("Node features:\n", features)
 
@@ -323,7 +334,7 @@ class VMASPlanningEnv(EnvBase):
                     edge_attrs.append(dist)
 
         edge_index = torch.tensor(edge_list, dtype=torch.int64, device=self.device).T  # Shape [2, num_edges] (COO)
-        edge_attrs = torch.tensor(edge_attrs, dtype=torch.float, device=self.device)  # Shape [num_edges]
+        edge_attrs = torch.tensor(edge_attrs, device=self.device)  # Shape [num_edges]
         if verbose: print("Edge index:\n", edge_index)
         if verbose: print("Edge attributes (distances):\n", edge_attrs)
 
@@ -336,7 +347,7 @@ class VMASPlanningEnv(EnvBase):
 
         self.graph_batch = Batch.from_data_list([graph])
         self.graph_obs = {
-            "x": graph["x"],
+            "x": graph["x"].reshape(-1),
             "edge_index": graph["edge_index"],
             # "edge_attr": torch.stack([g["edge_attr"] for g in all_graphs]),
             # "pos": torch.stack([g["pos"] for g in all_graphs]),
