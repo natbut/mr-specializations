@@ -54,14 +54,14 @@ def train_PPO(scenario):
     num_cells = 16
     batch_size = None # num_envs
     node_dim = 4
-    lr = 3e-4
+    lr = 1e-3
     max_grad_norm = 1.0
     # For a complete training, bring the number of frames up to 1M
-    frames_per_batch = 64 # training batch size
+    frames_per_batch = 256 # training batch size
     total_frames = 10*1024 # total frames collected
 
     ### PPO PARAMS ###
-    sub_batch_size = 16  # 64 # cardinality of the sub-samples gathered from the current data in the inner loop
+    sub_batch_size = 64  # 64 # cardinality of the sub-samples gathered from the current data in the inner loop
     num_epochs = 16  # optimization steps per batch of data collected
     clip_epsilon = (
         0.2  # clip value for PPO loss: see the equation in the intro for more context.
@@ -274,7 +274,7 @@ def train_PPO(scenario):
             # it will then execute this policy at each step.
             with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
                 # execute a rollout with the trained policy
-                eval_rollout = env.rollout(2, policy_module)
+                eval_rollout = env.rollout(3, policy_module)
                 logs["eval reward"].append(eval_rollout["next", "reward"].mean().item())
                 logs["eval reward (sum)"].append(
                     eval_rollout["next", "reward"].sum().item()

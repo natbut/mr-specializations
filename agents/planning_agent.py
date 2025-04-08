@@ -230,7 +230,7 @@ class PlanningAgent(Agent):
             for i, traj in enumerate(self.trajs):
                 if traj == []:
                     self.trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
-                if start_node_idxs[i] == traj[1] and norm_dists[start_node_idxs[i]] < 0.1:
+                if start_node_idxs[i] == traj[1] and norm_dists[start_node_idxs[i]] < 0.05:
                     # print(f"NODE {start_node_idxs[i]} REACHED; remaining traj: {traj[1:]}")
                     self.trajs[i] = traj[1:]
                 
