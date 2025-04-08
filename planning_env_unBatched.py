@@ -190,7 +190,8 @@ class VMASPlanningEnv(EnvBase):
         # Process actions (heuristic weights)
         # heuristic_weights = actions.view(self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
         heuristic_weights = actions["action"] # NOTE THESE ARE WEIGHTS FOR EVERY NODE, BUT WE ONLY USE AGENT LOCS
-        # print(f"Heuristic Weights: \n{heuristic_weights}")
+        if self.render:
+            print(f"\nHeuristic Weights: {heuristic_weights}")
         # heuristic_weights = self.heuristic_softmax(heuristic_weights) # Normalize weights to sum to 1 
 
         # Execute and aggregate rewards
