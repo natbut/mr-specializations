@@ -7,10 +7,10 @@ import os
 import numpy as np
 import torch
 from moviepy import ImageSequenceClip
-from scenarios.SR_tasks import Scenario
+from envs.scenarios.SR_tasks import Scenario
 from vmas import make_env
 # from vmas.simulator.scenario import BaseScenarion 
-from planning_env import VMASPlanningEnv
+from envs.planning_env_batched import VMASPlanningEnv
 
 # TORCHRL
 from collections import defaultdict
