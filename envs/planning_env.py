@@ -85,53 +85,59 @@ from typing import Tuple, Dict
 #     return td
 
 
-
 class VMASPlanningEnv(EnvBase):
     def __init__(
             self, scenario: BaseScenario, 
-            num_envs: int, 
             device: str = "cpu",
-            node_dim = 5,
-            **kwargs
+            env_kwargs: Dict = None,
+            scenario_kwargs: Dict = None,
             ):
         
         self.scenario = scenario
+
+        num_envs = env_kwargs.pop("num_envs", 1)
+        self.horizon = env_kwargs.pop("horizon", 10)  # Number of steps to execute per trajectory 
+        self.node_dim = env_kwargs.pop("node_dim", 4)
+        self.connectivity = env_kwargs.pop("connectivity", 4)
+        self.render = env_kwargs.pop("render", False)
+
         # TODO Check kwargs passing
-        if num_envs is None:
+        if num_envs == 1:
             super().__init__(batch_size=[], device=device)
             # VMAS Environment Configuration
-            self.sim_env = make_env(scenario=self.scenario,
+            self.sim_env = make_env(
+                                scenario=self.scenario,
                                 num_envs=1,
+                                max_steps=env_kwargs.pop("max_steps", 100),
                                 device=self.device,
+                                scenario_kwargs,
                                 )
         else:
             super().__init__(batch_size=[num_envs], device=device)
             # VMAS Environment Configuration
-            self.sim_env = make_env(scenario=self.scenario,
+            self.sim_env = make_env(
+                                scenario=self.scenario,
                                 num_envs=self.batch_size[0],
+                                max_steps=env_kwargs.pop("max_steps", 100),
                                 device=self.device,
+                                scenario_kwargs,
                                 )
 
-        
-        self.horizon = 20  # Number of steps to execute per trajectory 
-        self.node_dim = node_dim
-        self.render = False
         self.count = 0
         self.graph_batch = None
         self.sim_obs = None
-        connectivity=4
 
         n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
 
         # Define Observation & Action Specs
         self.observation_spec = Composite(
             x=Unbounded(
-                shape=(node_dim**2 * n_features),
+                shape=(self.node_dim**2 * n_features),
                 dtype=torch.float32,
                 device=device
                 ),
             edge_index=Unbounded(
-                shape=(2, (node_dim**2)*connectivity-node_dim**2),
+                shape=(2, (self.node_dim**2)*self.connectivity-self.node_dim**2),
                 dtype=torch.int64,
                 device=device
             ),
