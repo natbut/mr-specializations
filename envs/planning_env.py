@@ -110,7 +110,7 @@ class VMASPlanningEnv(EnvBase):
                                 num_envs=1,
                                 max_steps=env_kwargs.pop("max_steps", 100),
                                 device=self.device,
-                                scenario_kwargs,
+                                **scenario_kwargs,
                                 )
         else:
             super().__init__(batch_size=[num_envs], device=device)
@@ -120,12 +120,13 @@ class VMASPlanningEnv(EnvBase):
                                 num_envs=self.batch_size[0],
                                 max_steps=env_kwargs.pop("max_steps", 100),
                                 device=self.device,
-                                scenario_kwargs,
+                                **scenario_kwargs,
                                 )
 
-        self.count = 0
         self.graph_batch = None
         self.sim_obs = None
+        self.render_fp = None
+        self.count = 0
 
         n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
 
@@ -230,7 +231,7 @@ class VMASPlanningEnv(EnvBase):
             from moviepy import ImageSequenceClip
             fps = 20
             clip = ImageSequenceClip(frame_list, fps=fps)
-            clip.write_gif(f"img/rollout_{self.count}.gif", fps=fps)
+            clip.write_gif(f"{self.render_fp}_{self.count}.gif", fps=fps)
             self.count += 1
 
         # Construct next state representation   
