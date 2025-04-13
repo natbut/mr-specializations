@@ -8,7 +8,7 @@ if __name__ == "__main__":
     ### List test config files here ###
 
     # Env, Scenario & params
-    scenario = Scenario()
+    scenario = Scenario()  
     scenario_configs = [
         "conf/scenarios/SR_tasks.yaml",
     ]
@@ -18,7 +18,7 @@ if __name__ == "__main__":
 
     # RL Hyperparams
     rl_configs = [
-        "conf/algos/ppo_1.yaml",
+        "conf/algos/ppo_2_3.yaml",
     ]
 
     # Model Params
