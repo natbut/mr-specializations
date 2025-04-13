@@ -1,6 +1,6 @@
 
 # PPO config file
-lr: 0.001
+lr: 0.0001
 max_grad_norm: 1.0
 
 frames_per_batch: 256 # training batch size
