@@ -153,6 +153,7 @@ class PlanningAgent(Agent):
                 neighbors = graph.edge_index[1][graph.edge_index[0] == current]
                 # print(f"Neighbors of {current}: {neighbors}. \n Edge Index: \n{graph.edge_index}")
 
+                open_set = [] # TODO NOTE THAT THIS WAS ADDED TO PREVENT SOLUTION FROM JUMPING ACROSS THE MAP
                 for neighbor in neighbors:
                     neighbor = neighbor.item()
                     # TODO update to use edge_attr to add to g_score
@@ -169,7 +170,10 @@ class PlanningAgent(Agent):
 
                         if neighbor not in [n[1] for n in open_set]:
                             open_set.append((f_score[neighbor], neighbor))
-                
+
+                if len(open_set) == 0: # TODO NOTE THAT THIS WAS ADDED TO PREVENT SOLUTION FROM JUMPING ACROSS THE MAP
+                    open_set.append((f_score[current], current))
+
                 count += 1
 
             # Reconstruct path (NOTE code here just runs if horizon not reached)

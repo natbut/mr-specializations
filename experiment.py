@@ -244,6 +244,8 @@ def train_PPO(scenario,
         logs = defaultdict(list)
         pbar = tqdm(total=total_frames)
         eval_str = ""
+        best_reward = float("-inf")
+        best_checkpt = None
         # We iterate over the collector until it reaches the total number of frames it was
         # designed to collect:
         for i, tensordict_data in enumerate(collector):
@@ -331,6 +333,22 @@ def train_PPO(scenario,
                     run.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})
                     run.log({"eval/cum_reward": eval_rollout["next", "reward"].sum().item()})
                     run.log({"eval/step_count": eval_rollout["step_count"].max().item()})
+
+                    # Save best models
+                    if eval_rollout["next", "reward"].mean().item() > best_reward:
+                        best_reward = eval_rollout["next", "reward"].mean().item()
+                        checkpoint_name = f"best.pt"
+                        checkpoint_path = os.path.join(f"{test_folder_path}/checkpoints/", checkpoint_name)
+                        os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+                        torch.save({
+                            'step': i,
+                            'actor_state_dict': actor_net.state_dict(),
+                            'value_state_dict': value_net.state_dict(),
+                            'optimizer_state_dict': optim.state_dict(),
+                            'scheduler_state_dict': scheduler.state_dict(),
+                            'logs': logs,
+                        }, checkpoint_path)
+
                     del eval_rollout
                 env.base_env.render = False
 
