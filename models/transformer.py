@@ -4,41 +4,42 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class PositionalEncoding(nn.Module):
-    def __init__(self, embed_dim):
+    def __init__(self, d_model):
         super().__init__()
-        self.linear = nn.Linear(2, embed_dim)
+        self.linear = nn.Linear(2, d_model)
 
     def forward(self, xy):
         return self.linear(xy)  # learnable x,y embedding
 
 class EnvironmentTransformer(nn.Module):
-    def __init__(self, num_features, num_robots, num_heuristics, embed_dim=128, num_heads=4, num_layers=2):
+    def __init__(self, num_features, num_robots, num_heuristics, d_model=128, num_heads=4, num_layers=2):
         super().__init__()
-        self.embed_dim = embed_dim
+        self.d_model = d_model
         self.num_robots = num_robots
         self.num_heuristics = num_heuristics
 
         # Embed features + positional encoding
-        self.feature_embed = nn.Linear(num_features, embed_dim)
-        self.pos_embed = PositionalEncoding(embed_dim)
+        self.feature_embed = nn.Linear(num_features, d_model)
+        self.pos_embed = PositionalEncoding(d_model)
         
         # Transformer encoder: attends over all environment cells
-        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, batch_first=True)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=num_heads, batch_first=True)
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         # Critic: global value prediction from attended environment
         self.critic_head = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim),
+            nn.Linear(d_model, d_model),
             nn.ReLU(),
-            nn.Linear(embed_dim, 1)
+            nn.Linear(d_model, 1)
         )
 
         # Decoder for heuristic weights per robot
-        decoder_layer = nn.TransformerDecoderLayer(d_model=embed_dim, nhead=num_heads, batch_first=True)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=num_heads, batch_first=True)
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
 
-        self.output_head = nn.Linear(embed_dim, num_heuristics)
+        self.output_head = nn.Linear(d_model, num_heuristics)
 
     def forward(self, cell_features, cell_positions, robot_positions):
         """
@@ -73,7 +74,7 @@ class EnvironmentTransformer(nn.Module):
         # Gather embeddings of robot-assigned cells
         robot_tokens = torch.gather(
             enc_out, 1,
-            closest_idxs.unsqueeze(-1).expand(-1, -1, self.embed_dim)
+            closest_idxs.unsqueeze(-1).expand(-1, -1, self.d_model)
         )                                                      # [B, R, D]
 
         # === Decoder ===
