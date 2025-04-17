@@ -209,11 +209,13 @@ class PlanningAgent(Agent):
         if self.batch_dim != 1:
             dists = [graphs_list[i].pos - a_pos for i, a_pos in enumerate(start_raw)]
         else:
-            dists = [graphs_list[0].pos - a_pos for i, a_pos in enumerate(start_raw)]
+            # print("Graph pos:", graphs_list[0].pos, "A pos:", start_raw)
+            dists = [[graphs_list[0].pos - a_pos for i, a_pos in enumerate(start_raw)]]
         # print("Before calc:", dists)
         # print("Intermediate calc:", [torch.linalg.norm(d, dim=1) for d in dists[0]])
-        norm_dists = [torch.norm(d, dim=1) for d in dists[0]]
-        start_node_idxs = [torch.argmin(torch.stack(norm_dists)).item()]
+        norm_dists = torch.stack([torch.norm(d, dim=1) for d in dists[0]]).squeeze(0)
+        # print("Norm dists:", norm_dists)
+        start_node_idxs = [torch.argmin(norm_dists).item()]
         # print("Start node idxs:", start_node_idxs)
 
         
