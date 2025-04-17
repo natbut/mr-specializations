@@ -1,4 +1,5 @@
-from experiment import train_PPO
+from experiment_TF import train_PPO
+# from experiment import train_PPO
 from envs.scenarios.SR_tasks import Scenario
 
 
@@ -23,7 +24,7 @@ if __name__ == "__main__":
 
     # Model Params
     model_configs = [
-        "conf/models/mlp_1.yaml",
+        "conf/models/mat_1.yaml",
     ]
 
     
@@ -32,6 +33,7 @@ if __name__ == "__main__":
               env_configs,
               rl_configs,
               model_configs,
+              use_wandb=True
               )
 
 

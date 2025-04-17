@@ -15,7 +15,7 @@ from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
 from torchrl.data.replay_buffers.storages import LazyTensorStorage
 from torchrl.envs import (Compose, DoubleToFloat, ObservationNorm, StepCounter,
-                          TransformedEnv)
+                          TransformedEnv, CatTensors)
 from torchrl.envs.utils import (ExplorationType, check_env_specs,
                                 set_exploration_type)
 from torchrl.modules import ProbabilisticActor, TanhNormal, ValueOperator
@@ -23,8 +23,7 @@ from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 from tqdm import tqdm
 
-from envs.planning_env import VMASPlanningEnv
-from envs.scenarios.SR_tasks import Scenario
+from envs.planning_env_TF import VMASPlanningEnv
 from models.transformer import EnvironmentTransformer
 
 
@@ -118,23 +117,35 @@ def train_PPO(scenario,
             base_env,
             Compose(
                 # normalize observations
-                ObservationNorm(in_keys=["x"]), # Change to "observation"
-                DoubleToFloat(),
+                # ObservationNorm(in_keys=[("obs", "cell_feats")]),
+                # ObservationNorm(in_keys=[("obs", "cell_pos")]),
+                # ObservationNorm(in_keys=[("obs", "rob_pos")]),
+                DoubleToFloat(in_keys=[("obs", "cell_feats"), ("obs", "cell_pos"), ("obs", "rob_pos")]),
                 StepCounter(),
             ),
             device=device
         )
-
-        # env = ParallelEnv(
-        #     num_envs=2,
-        #     create_env_fn=base_env,
-        #     device=device
+        # env.append_transform(
+        #     CatTensors(in_keys=[
+        #         ("obs", "cell_feats"),
+        #         ("obs", "cell_pos"),
+        #         ("obs", "rob_pos"),
+        #         ],
+        #                out_keys=["observation"]
+        #     )
         # )
+        # env.append_transform(StepCounter())
 
-        env.transform[0].init_stats(num_iter=2, reduce_dim=0, cat_dim=0)
+        # Initialize stats
+        # env.transform[0].init_stats(num_iter=10)#, reduce_dim=0, cat_dim=0, keep_dims=False)
+        # print("normalization constant shape:\n", env.transform[0].loc.shape)
+        # env.transform[1].init_stats(num_iter=10)#, reduce_dim=0, cat_dim=0, keep_dims=False)
+        # print("normalization constant shape:\n", env.transform[1].loc.shape)
+        # env.transform[2].init_stats(num_iter=10)#, reduce_dim=0, cat_dim=0, keep_dims=False)
+        # print("normalization constant shape:\n", env.transform[2].loc.shape)
 
-        # Evaluate environment initialization
-        print("normalization constant shape:\n", env.transform[0].loc.shape)
+        # # Evaluate environment initialization
+        # print("normalization constant shape:\n", env.transform[0].loc.shape)
 
         print("observation_spec:\n", env.observation_spec)
         print("reward_spec:\n", env.reward_spec)
@@ -149,7 +160,7 @@ def train_PPO(scenario,
 
         ### ACTOR & CRITIC POLICY MODULES ###
 
-        num_cells = model_config["num_cells"]
+        # num_cells = model_config["num_cells"]
         num_features = model_config["num_features"]
         num_robots = model_config["num_robots"]
         num_heuristics = model_config["num_heuristics"]
@@ -161,11 +172,18 @@ def train_PPO(scenario,
                                            num_robots=num_robots,
                                            num_heuristics=num_heuristics,
                                            d_model=d_model,
-                                           )
+                                           ).to(device)
 
         policy_module = TensorDictModule(
-            mat, in_keys=["x"], out_keys=["val","loc","scale"]
+            mat,
+            in_keys=[("obs", "cell_feats"), ("obs", "cell_pos"), ("obs", "rob_pos")],
+            out_keys=["foo","loc","scale"]
         )
+
+        # print("LOW:", env.action_spec_unbatched.space.low)
+        # print("HIGH:", env.action_spec_unbatched.space.high)
+
+        # break
 
         policy_module = ProbabilisticActor( # Actions sampled from dist during exploration
             module=policy_module,
@@ -177,25 +195,13 @@ def train_PPO(scenario,
                 "high": env.action_spec_unbatched.space.high,
             },
             return_log_prob=True,
-            # we'll need the log-prob for the numerator of the importance weights
-        )
-
-        # TODO start with seperate actor and critic networks for now. Can integrate critic later (will need to once env dims change).
-        value_net = nn.Sequential(
-
-            nn.LazyLinear(2*num_cells, device=device),
-            nn.Tanh(),
-            nn.LazyLinear(num_cells, device=device),
-            nn.Tanh(),
-            nn.LazyLinear(num_cells, device=device),
-            nn.Tanh(),
-            nn.LazyLinear(1, device=device),
+            # NOTE we need the log-prob for the numerator of the importance weights
         )
 
         value_module = ValueOperator(
             module=mat,
-            in_keys=["x"],
-            out_keys=["loc", "scale"],
+            in_keys=[("obs", "cell_feats"), ("obs", "cell_pos"), ("obs", "rob_pos")],
+            out_keys=["state_value","foo","bar"]
         )
 
         print("Running policy:", policy_module(env.reset()))
@@ -241,7 +247,6 @@ def train_PPO(scenario,
         pbar = tqdm(total=total_frames)
         eval_str = ""
         best_reward = float("-inf")
-        best_checkpt = None
         # We iterate over the collector until it reaches the total number of frames it was
         # designed to collect:
         for i, tensordict_data in enumerate(collector):
@@ -256,6 +261,9 @@ def train_PPO(scenario,
                 # print("!! TDict Data:\n", tensordict_data)
                 # Compute advantage values and add to tdict
                 advantage_module(tensordict_data)
+
+                # print("Sample log prob:", tensordict_data["sample_log_prob"])
+                # print("Advantage:", tensordict_data["advantage"])
                 
                 data_view = tensordict_data.reshape(-1)
 
@@ -263,12 +271,18 @@ def train_PPO(scenario,
 
                 for _ in range(frames_per_batch // sub_batch_size):
                     subdata = replay_buffer.sample(sub_batch_size)
+                    # print("\nSUBDATA:", subdata)
+                    # print("Sample log prob:", subdata["sample_log_prob"])
+                    # print("Advantage:", subdata["advantage"])
                     loss_vals = loss_module(subdata.to(device))
                     loss_value = (
                         loss_vals["loss_objective"]
                         + loss_vals["loss_critic"]
                         + loss_vals["loss_entropy"]
                     )
+                    # print("\nLOSS Obj:", loss_vals["loss_objective"])
+                    # print("LOSS Crit:", loss_vals["loss_critic"])
+                    # print("LOSS Entr:", loss_vals["loss_entropy"])
                     logs["loss_objective"].append(loss_vals["loss_objective"].item())
                     logs["loss_critic"].append(loss_vals["loss_critic"].item())
                     logs["loss_entropy"].append(loss_vals["loss_entropy"].item())
@@ -339,8 +353,7 @@ def train_PPO(scenario,
                         os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
                         torch.save({
                             'step': i,
-                            'actor_state_dict': mat.state_dict(),
-                            'value_state_dict': value_net.state_dict(),
+                            'tf_state_dict': mat.state_dict(),
                             'optimizer_state_dict': optim.state_dict(),
                             'scheduler_state_dict': scheduler.state_dict(),
                             'logs': logs,
@@ -355,8 +368,7 @@ def train_PPO(scenario,
                 os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
                 torch.save({
                     'step': i,
-                    'actor_state_dict': mat.state_dict(),
-                    'value_state_dict': value_net.state_dict(),
+                    'tf_state_dict': mat.state_dict(),
                     'optimizer_state_dict': optim.state_dict(),
                     'scheduler_state_dict': scheduler.state_dict(),
                     'logs': logs,
