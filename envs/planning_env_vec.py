@@ -1,5 +1,4 @@
 import torch
-import torchrl
 from torchrl.envs import EnvBase
 from torchrl.data import Unbounded, Composite, Bounded
 from torch_geometric.data import Data, Batch  # For Graph Representation
@@ -8,81 +7,6 @@ from tensordict.tensordict import TensorDict
 from vmas.simulator.scenario import BaseScenario
 from vmas import make_env
 from typing import Tuple, Dict
-
-# def make_composite_from_td(td):
-#     # custom function to convert a ``tensordict`` in a similar spec structure
-#     # of unbounded values.
-#     composite = Composite(
-#         {
-#             key: make_composite_from_td(tensor)
-#             if isinstance(tensor, TensorDictBase)
-#             else Unbounded(dtype=tensor.dtype, device=tensor.device, shape=tensor.shape)
-#             for key, tensor in td.items()
-#         },
-#         shape=td.shape,
-#     )
-#     return composite
-
-# def _make_spec(self, td_params):
-#     # Under the hood, this will populate self.output_spec["observation"]
-#     self.observation_spec = Composite(
-#         x=Unbounded(
-#             shape=(),
-#             ),
-#         edge_index=Unbounded(
-#             shape=(),
-#         ),
-#         params=make_composite_from_td(td_params["params"]),
-#         shape=(),
-#     )
-
-#     # since the environment is stateless, we expect the previous output as input.
-#     # For this, ``EnvBase`` expects some state_spec to be available
-#     self.state_spec = self.observation_spec.clone()
-#     # action-spec will be automatically wrapped in input_spec when
-#     # `self.action_spec = spec` will be called supported
-#     self.action_spec = Bounded(
-#         low=-torch.ones((
-#                             self.node_dim**2,
-#                             n_features
-#                             ),
-#                         device=device
-#                         ),
-#         high=torch.ones((
-#                             self.node_dim**2,
-#                             n_features
-#                             ),
-#                         device=device
-#                         ),
-#         shape=(n_agents, n_features),
-#     )
-
-#     self.reward_spec = Unbounded(shape=(*td_params.shape, 1))
-
-
-# def gen_params(g=10.0, batch_size=None) -> TensorDictBase:
-#     """Returns a ``tensordict`` containing the physical parameters such as gravitational force and torque or speed limits."""
-#     if batch_size is None:
-#         batch_size = []
-#     td = TensorDict(
-#         {
-#             "params": TensorDict(
-#                 {
-#                     "max_speed": 8,
-#                     "max_torque": 2.0,
-#                     "dt": 0.05,
-#                     "g": g,
-#                     "m": 1.0,
-#                     "l": 1.0,
-#                 },
-#                 [],
-#             )
-#         },
-#         [],
-#     )
-#     if batch_size:
-#         td = td.expand(batch_size).contiguous()
-#     return td
 
 
 class VMASPlanningEnv(EnvBase):
@@ -132,60 +56,65 @@ class VMASPlanningEnv(EnvBase):
 
         # Define Observation & Action Specs
         self.observation_spec = Composite(
-            x=Unbounded(
-                shape=(self.node_dim**2 * n_features),
-                dtype=torch.float32,
-                device=device
+            obs=Composite(
+                cell_feats=Unbounded(
+                    shape=(num_envs, self.node_dim**2, n_features),
+                    dtype=torch.float64,
+                    device=device
+                    ),
+                cell_pos=Unbounded(
+                    shape=(num_envs, self.node_dim**2, 2),
+                    dtype=torch.float64,
+                    device=device
                 ),
-            edge_index=Unbounded(
-                shape=(2, (self.node_dim**2)*self.connectivity-self.node_dim**2),
-                dtype=torch.int64,
+                rob_pos=Unbounded(
+                    shape=(num_envs, self.sim_env.n_agents, 2),
+                    dtype=torch.float64,
+                    device=device
+                ),
                 device=device
             ),
-            shape=(),
+            shape=(num_envs,),
             device=device
         )
         # print(f"\nObservation Spec:\n{self.observation_spec}")
 
         self.action_spec = Bounded(
             low=-torch.ones((
-                            #  self.node_dim**2,
-                             n_features
-                             ),
+                            num_envs,
+                            self.sim_env.n_agents,
+                            n_features
+                            ),
                             device=device
                             ),
             high=torch.ones((
-                            #  self.node_dim**2,
-                             n_features
-                             ),
+                            num_envs,
+                            self.sim_env.n_agents,
+                            n_features
+                            ),
                             device=device
                             ),
-            shape=(n_features), # self.node_dim**2, 
+            shape=(num_envs, self.sim_env.n_agents, n_features), # self.node_dim**2, 
             device=device
         )
         # print(f"\nAction (Weights) Spec:\n{self.action_spec}")
 
         self.reward_spec = Unbounded(
-            shape=(self.sim_env.n_agents),
+            shape=(num_envs, 1), #(self.sim_env.n_agents),
             device=device
             )#, self.scenario.n_agents))
         # print(f"\nReward Spec:\n{self.reward_spec}")
-
-        self.heuristic_softmax = torch.nn.Softmax(dim=-1)
 
     def _reset(self, obs_tensordict=None) -> TensorDict:
         """Reset all VMAS worlds and return initial state."""
         self.sim_obs = self.sim_env.reset()
         self._build_obs_graph(node_dim=self.node_dim)
-        out = TensorDict(
-            self.graph_obs,
-            device=self.device,
-            batch_size=self.batch_size
-            )
-        out.set("step_count", torch.full(self.batch_size, 1))
-        # print("Reset TDict:", out)
+        obs = TensorDict({"obs": self.graph_obs},
+                         device=self.device)
+        # out.set("step_count", torch.full(self.batch_size, 1))
+        # print("Reset TDict:", obs)
         # print("Expanded:", [(x_i, edges_i) for x_i, edges_i in zip(self.graph_obs["x"], self.graph_obs["edge_index"])])
-        return out
+        return obs
 
     def _step(self, actions: TensorDict) -> TensorDict:
         """
@@ -198,11 +127,10 @@ class VMASPlanningEnv(EnvBase):
         # heuristic_weights = actions.view(self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
         heuristic_weights = actions["action"] # NOTE THESE ARE WEIGHTS FOR EVERY NODE, BUT WE ONLY USE AGENT LOCS
         if self.render:
-            print(f"\nHeuristic Weights: {heuristic_weights}")
-        # heuristic_weights = self.heuristic_softmax(heuristic_weights) # Normalize weights to sum to 1 
+            print(f"\nHeuristic Weights:\n {heuristic_weights} Shape: {heuristic_weights.shape}")
 
         # Execute and aggregate rewards
-        rewards = torch.zeros((self.sim_env.n_agents), device=self.device)
+        rewards = torch.zeros((1,), device=self.device)
         frame_list = []
         # Update planning graph (assuming env is dynamic)
         self._build_obs_graph(node_dim=self.node_dim) # TODO for more dynamic envs, update this more frequently (in below loop)
@@ -214,11 +142,11 @@ class VMASPlanningEnv(EnvBase):
             # Compute agent trajectories & get actions
             u_action = []
             for i, agent in enumerate(self.sim_env.agents):
-                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights, self.horizon-t, verbose)) # get next actions from agent controllers
+                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights[i], self.horizon-t, verbose)) # get next actions from agent controllers
             # print("U-ACTION:", u_action)
             self.sim_obs, rews, dones, info = self.sim_env.step(u_action)
-            # print("Rewards:", rewards, "rews:", rews)
-            rewards += rews[0]
+            # print("Rewards:", rewards, "rews:", rews, "sum:", torch.sum(torch.stack(rews)))
+            rewards += torch.sum(torch.stack(rews))
 
             if self.render:
                 frame = self.sim_env.render(
@@ -236,7 +164,7 @@ class VMASPlanningEnv(EnvBase):
 
         # Construct next state representation   
         next_state = TensorDict(
-            self.graph_obs,
+            {"obs": self.graph_obs},
             device=self.device,
         )
         rew_tdict = TensorDict(
@@ -248,7 +176,7 @@ class VMASPlanningEnv(EnvBase):
             device=self.device,
         )
 
-        next_state.set("step_count", 1)
+        # next_state.set("step_count", 1)
 
         # Should return next_state, rewards, done as tensordict
         next_state.update(rew_tdict).update(done_tdict) 
@@ -278,7 +206,7 @@ class VMASPlanningEnv(EnvBase):
         for key in global_obs_dict:
             if "obs" in key:
                 for entity in global_obs_dict[key]:
-                    element_positions.append(entity)
+                    element_positions.append(entity.squeeze(0))
         # print([global_obs_dict[key] for key in global_obs_dict if "obs" in key])
         # element_positions = torch.cat([el[i] for el in [global_obs_dict[key] for key in global_obs_dict if "obs" in key]])
         # print("el pos", torch.stack(element_positions))
@@ -297,7 +225,7 @@ class VMASPlanningEnv(EnvBase):
         for x_idx in range(node_dim):
             for y_idx in range(node_dim):
                 node_pos = min_dims + cell_dim*(torch.tensor((x_idx+0.5, y_idx+0.5), device=self.device))
-                node_positions.append(node_pos)
+                node_positions.append(node_pos.squeeze(0))
                 node_indices[(x_idx, y_idx)] = index
                 index += 1
         
@@ -312,8 +240,8 @@ class VMASPlanningEnv(EnvBase):
         for j, feature_pos in enumerate(element_positions):
             for k, node_pos in enumerate(node_positions):
                 # Check if the feature is within the square cell centered at the node
-                within_x = torch.abs(feature_pos[0][0] - node_pos[0][0]) <= cell_dim[0][0] / 2
-                within_y = torch.abs(feature_pos[0][1] - node_pos[0][1]) <= cell_dim[0][1] / 2
+                within_x = torch.abs(feature_pos[0] - node_pos[0]) <= cell_dim[0] / 2
+                within_y = torch.abs(feature_pos[1] - node_pos[1]) <= cell_dim[1] / 2
                 if within_x and within_y:
                     if verbose:
                         print(f"Feature {feature_pos} within square cell of node {k}: {node_pos}")
@@ -353,10 +281,13 @@ class VMASPlanningEnv(EnvBase):
         # edge_attr_vec.append(edge_attrs)
         # pos_vec.append(node_pos)
 
+        # print("\n!!! ROB POS:", self.sim_obs[0]["obs_agents"].squeeze(1), "Shape:", self.sim_obs[0]["obs_agents"].squeeze(1).shape)
+
         self.graph_batch = Batch.from_data_list([graph])
         self.graph_obs = {
-            "x": graph["x"].reshape(-1),
-            "edge_index": graph["edge_index"],
+            "cell_feats": graph["x"],
+            "cell_pos": graph["pos"],
+            "rob_pos": self.sim_obs[0]["obs_agents"].squeeze(1),
             # "edge_attr": torch.stack([g["edge_attr"] for g in all_graphs]),
             # "pos": torch.stack([g["pos"] for g in all_graphs]),
             # "batch": batched_graph.batch,

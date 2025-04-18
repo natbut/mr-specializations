@@ -1,4 +1,4 @@
-from experiment_TF import train_PPO
+from experiment_vec import train_PPO
 # from experiment import train_PPO
 from envs.scenarios.SR_tasks import Scenario
 
@@ -14,7 +14,7 @@ if __name__ == "__main__":
         "conf/scenarios/SR_tasks.yaml",
     ]
     env_configs = [
-        "conf/envs/planning_env_2.yaml",
+        "conf/envs/planning_env_vec.yaml",
     ]
 
     # RL Hyperparams
