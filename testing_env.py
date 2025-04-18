@@ -3,7 +3,7 @@ import torch
 from torchrl.data import CompositeSpec, BoundedTensorSpec, Unbounded
 
 from envs.scenarios.SR_tasks import Scenario
-from envs.planning_env import VMASPlanningEnv
+from envs.planning_env_vec import VMASPlanningEnv
 from tensordict.tensordict import TensorDict
 from torchrl.envs import (
     Compose,
