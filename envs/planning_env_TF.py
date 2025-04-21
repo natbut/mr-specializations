@@ -230,6 +230,9 @@ class VMASPlanningEnv(EnvBase):
                     agent_index_focus=None,  # Can give the camera an agent index to focus on
                 )
                 frame_list.append(frame)
+                
+            if dones.any():
+                break
             
         if self.render:
             from moviepy import ImageSequenceClip
