@@ -15,7 +15,7 @@ from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
 from torchrl.data.replay_buffers.storages import LazyTensorStorage
 from torchrl.envs import (Compose, DoubleToFloat, ObservationNorm, StepCounter,
-                          TransformedEnv, CatTensors)
+                          TransformedEnv, CatTensors, ParallelEnv)
 from torchrl.envs.utils import (ExplorationType, check_env_specs,
                                 set_exploration_type)
 from torchrl.modules import ProbabilisticActor, TanhNormal, ValueOperator
@@ -112,7 +112,7 @@ def train_PPO(scenario,
                                     env_kwargs=env_config,
                                     scenario_kwargs=scenario_config,
                                     )
-        
+
         env = TransformedEnv(
             base_env,
             Compose(
@@ -120,7 +120,7 @@ def train_PPO(scenario,
                 # ObservationNorm(in_keys=[("obs", "cell_feats")]),
                 # ObservationNorm(in_keys=[("obs", "cell_pos")]),
                 # ObservationNorm(in_keys=[("obs", "rob_pos")]),
-                DoubleToFloat(in_keys=[("obs", "cell_feats"), ("obs", "cell_pos"), ("obs", "rob_pos")]),
+                DoubleToFloat(in_keys=[("cell_feats"), ("cell_pos"), ("rob_pos")]),
                 StepCounter(),
             ),
             device=device
@@ -174,10 +174,9 @@ def train_PPO(scenario,
 
         policy_module = TensorDictModule(
             mat,
-            in_keys=[("obs", "cell_feats"), ("obs", "cell_pos"), ("obs", "rob_pos")],
+            in_keys=[("cell_feats"), ("cell_pos"), ("rob_pos")],
             out_keys=["foo","loc","scale"]
         )
-
         # print("LOW:", env.action_spec_unbatched.space.low)
         # print("HIGH:", env.action_spec_unbatched.space.high)
 
@@ -198,7 +197,7 @@ def train_PPO(scenario,
 
         value_module = ValueOperator(
             module=mat,
-            in_keys=[("obs", "cell_feats"), ("obs", "cell_pos"), ("obs", "rob_pos")],
+            in_keys=[("cell_feats"), ("cell_pos"), ("rob_pos")],
             out_keys=["state_value","foo","bar"]
         )
 
@@ -257,8 +256,11 @@ def train_PPO(scenario,
                 # network which is updated in the inner loop.
 
                 # print("!! TDict Data:\n", tensordict_data)
+
+                flat_batch = tensordict_data.reshape(-1, *tensordict_data.shape[2:])
+                # print("!! Flat Batch:\n", flat_batch)
                 # Compute advantage values and add to tdict
-                advantage_module(tensordict_data)
+                advantage_module(flat_batch)
 
                 # print("Sample log prob:", tensordict_data["sample_log_prob"])
                 # print("Advantage:", tensordict_data["advantage"])

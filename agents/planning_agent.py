@@ -90,12 +90,13 @@ class PlanningAgent(Agent):
         for i, node_vec in enumerate(node_features): #x
             # Compute dist from cur_pos to node_pos; fill for each feature present at node
             h_vec = torch.where(node_vec == 1, torch.norm(node_pos[i]-cur_node_pos), 0)
-            if verbose: print(f"Heuristic eval for {node_vec}: {h_vec}")
+            # if verbose: print(f"Heuristic eval for {node_vec}: {h_vec}")
+            # if verbose: print("Heuristic weights:", heuristic_weights, " shape:", heuristic_weights.shape)
 
             # Sum weighted heuristics
             # print("Heuristic weights:", heuristic_weights)
             h_val = torch.dot(heuristic_weights, h_vec)
-            if verbose: print("!!! VAL:", h_val, "for weights", heuristic_weights)
+            # if verbose: print("!!! VAL:", h_val)
             total_val += h_val
 
         if verbose: print("=== H VAL:", total_val, " ===")
@@ -112,12 +113,10 @@ class PlanningAgent(Agent):
 
         # Plan trajectory (here we use A* search) f = g + h
         all_traj = []
-        for i, graph in enumerate(graphs):
+        for i, graph in enumerate(graphs): # iterate through batches
             start_idx = start_node_idxs[i]
             if verbose: print("start:", start_idx)
             num_nodes = len(graph.pos)
-            # Init priority queue & score tracking
-            open_set = [(0.0, start_idx)] # (f, id)
             parents = {}
             g_score = {node: float('inf') for node in range(num_nodes)}
             f_score = {node: float('inf') for node in range(num_nodes)}
@@ -127,8 +126,11 @@ class PlanningAgent(Agent):
             f_score[start_idx] = g_score[start_idx] + self._compute_dist_heuristics_val(graph.pos[start_idx],
                                                                                    graph.pos,
                                                                                    graph.x,
-                                                                                   heuristic_weights#[i]
+                                                                                   heuristic_weights[i]
                                                                                    )
+            
+            # Init priority queue & score tracking
+            open_set = [(f_score[start_idx], start_idx)] # (f, id)
 
             count = 0
             path = []
@@ -136,7 +138,7 @@ class PlanningAgent(Agent):
                 # Get node with lowest f_score, remove from queue
                 if verbose: print("Open set:", open_set)
                 _, current = min(open_set, key=lambda x: f_score[x[1]])
-                open_set = [node for node in open_set if node[1] != current]
+                # open_set = [node for node in open_set if node[1] != current]
                 if verbose: print("Expanding", current)
                 path.append(current) # NOTE we are appending lowest-cost nodes to path
 
@@ -165,7 +167,7 @@ class PlanningAgent(Agent):
                         f_score[neighbor] = g_score[neighbor] + self._compute_dist_heuristics_val(graph.pos[neighbor],
                                                                                             graph.pos,
                                                                                             graph.x,
-                                                                                            heuristic_weights#[i]
+                                                                                            heuristic_weights[i]
                                                                                             )
 
                         if neighbor not in [n[1] for n in open_set]:
@@ -210,12 +212,12 @@ class PlanningAgent(Agent):
             dists = [graphs_list[i].pos - a_pos for i, a_pos in enumerate(start_raw)]
         else:
             # print("Graph pos:", graphs_list[0].pos, "A pos:", start_raw)
-            dists = [[graphs_list[0].pos - a_pos for i, a_pos in enumerate(start_raw)]]
+            dists = [graphs_list[0].pos - a_pos for i, a_pos in enumerate(start_raw)]
         # print("Before calc:", dists)
-        # print("Intermediate calc:", [torch.linalg.norm(d, dim=1) for d in dists[0]])
-        norm_dists = torch.stack([torch.norm(d, dim=1) for d in dists[0]]).squeeze(0)
+        # print("Intermediate calc:", [torch.linalg.norm(d, dim=1) for d in dists])
+        norm_dists = torch.stack([torch.norm(d, dim=1) for d in dists])#.squeeze(0)
         # print("Norm dists:", norm_dists)
-        start_node_idxs = [torch.argmin(norm_dists).item()]
+        start_node_idxs = [torch.argmin(norm_d).item() for norm_d in norm_dists]
         # print("Start node idxs:", start_node_idxs)
 
         
@@ -236,7 +238,7 @@ class PlanningAgent(Agent):
             for i, traj in enumerate(self.trajs):
                 if traj == []:
                     self.trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
-                if start_node_idxs[i] == traj[1] and norm_dists[start_node_idxs[i]] < 0.05:
+                if start_node_idxs[i] == traj[1] and norm_dists[i][start_node_idxs[i]] < 0.05:
                     # print(f"NODE {start_node_idxs[i]} REACHED; remaining traj: {traj[1:]}")
                     self.trajs[i] = traj[1:]
                 
