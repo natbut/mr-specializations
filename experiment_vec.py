@@ -162,14 +162,12 @@ def train_PPO(scenario,
 
         # num_cells = model_config["num_cells"]
         num_features = model_config["num_features"]
-        num_robots = model_config["num_robots"]
         num_heuristics = model_config["num_heuristics"]
         d_model = model_config["d_model"]
         #num_heads
         #num_layers
         
         mat = EnvironmentTransformer(num_features=num_features,
-                                           num_robots=num_robots,
                                            num_heuristics=num_heuristics,
                                            d_model=d_model,
                                            ).to(device)

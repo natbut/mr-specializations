@@ -19,14 +19,21 @@ class VMASPlanningEnv(EnvBase):
         
         self.scenario = scenario
 
-        num_envs = env_kwargs.pop("num_envs", 1)
+        self.num_envs = env_kwargs.pop("num_envs", 1)
         self.horizon = env_kwargs.pop("horizon", 10)  # Number of steps to execute per trajectory 
         self.node_dim = env_kwargs.pop("node_dim", 4)
         self.connectivity = env_kwargs.pop("connectivity", 4)
         self.render = env_kwargs.pop("render", False)
 
+        self.graph_batch = None
+        self.sim_obs = None
+        self.render_fp = None
+        self.count = 0
+
+        n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
+
         # TODO Check kwargs passing
-        if num_envs == 1:
+        if self.num_envs == 1:
             super().__init__(batch_size=[], device=device)
             # VMAS Environment Configuration
             self.sim_env = make_env(
@@ -36,8 +43,55 @@ class VMASPlanningEnv(EnvBase):
                                 device=self.device,
                                 **scenario_kwargs,
                                 )
+            
+            # Define Observation & Action Specs
+            self.observation_spec = Composite(
+                obs=Composite(
+                    cell_feats=Unbounded(
+                        shape=(self.node_dim**2, n_features),
+                        dtype=torch.float64,
+                        device=device
+                        ),
+                    cell_pos=Unbounded(
+                        shape=(self.node_dim**2, 2),
+                        dtype=torch.float64,
+                        device=device
+                    ),
+                    rob_pos=Unbounded(
+                        shape=(self.sim_env.n_agents, 2),
+                        dtype=torch.float64,
+                        device=device
+                    ),
+                    device=device
+                ),
+                shape=(1,),
+                device=device
+            )
+
+            self.action_spec = Bounded(
+                low=-torch.ones((
+                                self.sim_env.n_agents,
+                                n_features
+                                ),
+                                device=device
+                                ),
+                high=torch.ones((
+                                self.sim_env.n_agents,
+                                n_features
+                                ),
+                                device=device
+                                ),
+                shape=(self.sim_env.n_agents, n_features), # self.node_dim**2, 
+                device=device
+            )
+
+            self.reward_spec = Unbounded(
+                shape=(1,), #(self.sim_env.n_agents),
+                device=device
+                )#, self.scenario.n_agents))
+
         else:
-            super().__init__(batch_size=[num_envs], device=device)
+            super().__init__(batch_size=[self.num_envs], device=device)
             # VMAS Environment Configuration
             self.sim_env = make_env(
                                 scenario=self.scenario,
@@ -47,63 +101,53 @@ class VMASPlanningEnv(EnvBase):
                                 **scenario_kwargs,
                                 )
 
-        self.graph_batch = None
-        self.sim_obs = None
-        self.render_fp = None
-        self.count = 0
-
-        n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
-
-        # Define Observation & Action Specs
-        self.observation_spec = Composite(
-            obs=Composite(
-                cell_feats=Unbounded(
-                    shape=(num_envs, self.node_dim**2, n_features),
-                    dtype=torch.float64,
-                    device=device
+            # Define Observation & Action Specs
+            self.observation_spec = Composite(
+                obs=Composite(
+                    cell_feats=Unbounded(
+                        shape=(self.num_envs, self.node_dim**2, n_features),
+                        dtype=torch.float64,
+                        device=device
+                        ),
+                    cell_pos=Unbounded(
+                        shape=(self.num_envs, self.node_dim**2, 2),
+                        dtype=torch.float64,
+                        device=device
                     ),
-                cell_pos=Unbounded(
-                    shape=(num_envs, self.node_dim**2, 2),
-                    dtype=torch.float64,
+                    rob_pos=Unbounded(
+                        shape=(self.num_envs, self.sim_env.n_agents, 2),
+                        dtype=torch.float64,
+                        device=device
+                    ),
                     device=device
                 ),
-                rob_pos=Unbounded(
-                    shape=(num_envs, self.sim_env.n_agents, 2),
-                    dtype=torch.float64,
-                    device=device
-                ),
+                shape=(self.num_envs,),
                 device=device
-            ),
-            shape=(num_envs,),
-            device=device
-        )
-        # print(f"\nObservation Spec:\n{self.observation_spec}")
+            )
 
-        self.action_spec = Bounded(
-            low=-torch.ones((
-                            num_envs,
-                            self.sim_env.n_agents,
-                            n_features
-                            ),
-                            device=device
-                            ),
-            high=torch.ones((
-                            num_envs,
-                            self.sim_env.n_agents,
-                            n_features
-                            ),
-                            device=device
-                            ),
-            shape=(num_envs, self.sim_env.n_agents, n_features), # self.node_dim**2, 
-            device=device
-        )
-        # print(f"\nAction (Weights) Spec:\n{self.action_spec}")
+            self.action_spec = Bounded(
+                low=-torch.ones((
+                                self.num_envs,
+                                self.sim_env.n_agents,
+                                n_features
+                                ),
+                                device=device
+                                ),
+                high=torch.ones((
+                                self.num_envs,
+                                self.sim_env.n_agents,
+                                n_features
+                                ),
+                                device=device
+                                ),
+                shape=(self.num_envs, self.sim_env.n_agents, n_features),
+                device=device
+            )
 
-        self.reward_spec = Unbounded(
-            shape=(num_envs, 1), #(self.sim_env.n_agents),
-            device=device
-            )#, self.scenario.n_agents))
-        # print(f"\nReward Spec:\n{self.reward_spec}")
+            self.reward_spec = Unbounded(
+                shape=(self.num_envs, 1),
+                device=device
+                )
 
     def _reset(self, obs_tensordict=None) -> TensorDict:
         """Reset all VMAS worlds and return initial state."""
@@ -154,6 +198,9 @@ class VMASPlanningEnv(EnvBase):
                     agent_index_focus=None,  # Can give the camera an agent index to focus on
                 )
                 frame_list.append(frame)
+
+            if dones.any():
+                break
             
         if self.render:
             from moviepy import ImageSequenceClip
@@ -172,7 +219,7 @@ class VMASPlanningEnv(EnvBase):
             device=self.device,
         )
         done_tdict = TensorDict(
-            {"done": self.scenario.done()}, # TODO check done compute
+            {"done": self.scenario.done()},
             device=self.device,
         )
 
@@ -201,93 +248,97 @@ class VMASPlanningEnv(EnvBase):
         global_obs_dict = self.sim_obs[0] # each entry is num_envs x entry_size
         if verbose: print(f"BuildGraph Obs:\n {global_obs_dict}") # NOTE only need 1 obs if global
 
-        # Dynamically compute node_rad to allow fixed graph topology for varying problem sizes
-        element_positions = []
-        for key in global_obs_dict:
-            if "obs" in key:
-                for entity in global_obs_dict[key]:
-                    element_positions.append(entity.squeeze(0))
-        # print([global_obs_dict[key] for key in global_obs_dict if "obs" in key])
-        # element_positions = torch.cat([el[i] for el in [global_obs_dict[key] for key in global_obs_dict if "obs" in key]])
-        # print("el pos", torch.stack(element_positions))
-        element_positions = torch.stack(element_positions)
-        min_dims = torch.min(element_positions, dim=0).values
-        max_dims = torch.max(element_positions, dim=0).values
+        all_graphs = []
+        for i in range(self.num_envs):
+            # Dynamically compute node_rad to allow fixed graph topology for varying problem sizes
+            element_positions = []
+            for key in global_obs_dict:
+                if "obs" in key:
+                    for entity in global_obs_dict[key]:
+                        element_positions.append(entity.squeeze(0))
+            # print([global_obs_dict[key] for key in global_obs_dict if "obs" in key])
+            # element_positions = torch.cat([el[i] for el in [global_obs_dict[key] for key in global_obs_dict if "obs" in key]])
+            # print("el pos", torch.stack(element_positions))
+            element_positions = torch.stack(element_positions)
+            min_dims = torch.min(element_positions, dim=0).values
+            max_dims = torch.max(element_positions, dim=0).values
 
-        cell_dim = 1.001*((max_dims - min_dims)/node_dim) #torch.max
-        
-        if verbose: print("Element Positions", element_positions, "Max/Min:", max_dims, min_dims, "Cell Dim:", cell_dim)
-
-        # Create a grid of node centers
-        node_positions = []
-        node_indices = {}
-        index = 0
-        for x_idx in range(node_dim):
-            for y_idx in range(node_dim):
-                node_pos = min_dims + cell_dim*(torch.tensor((x_idx+0.5, y_idx+0.5), device=self.device))
-                node_positions.append(node_pos.squeeze(0))
-                node_indices[(x_idx, y_idx)] = index
-                index += 1
-        
-        num_nodes = len(node_positions)
-        node_positions = torch.stack(node_positions)
-        
-        if verbose: print(f"Env Node positions: \n{node_positions} \nEnv Node Indices: {node_indices}")
-
-        # Compute binary feature vectors using square-shaped cells
-        features = torch.zeros((num_nodes, len(element_positions)), dtype=torch.float32, device=self.device)  # [agent_presence, task_presence, obstacle_presence]
-        
-        for j, feature_pos in enumerate(element_positions):
-            for k, node_pos in enumerate(node_positions):
-                # Check if the feature is within the square cell centered at the node
-                within_x = torch.abs(feature_pos[0] - node_pos[0]) <= cell_dim[0] / 2
-                within_y = torch.abs(feature_pos[1] - node_pos[1]) <= cell_dim[1] / 2
-                if within_x and within_y:
-                    if verbose:
-                        print(f"Feature {feature_pos} within square cell of node {k}: {node_pos}")
-                    features[k, j] = 1
-
-        if verbose: print("Node features:\n", features)
-
-        # Compute edge adjacency list & attributes (4-way or 8-way connectivity)
-        edge_list = []
-        edge_attrs = []  # To store distances between connected nodes
-        for (x_idx, y_idx), node_id in node_indices.items():
-            neighbors = []
-            if connectivity == 4:
-                neighbors = [(x_idx-1, y_idx), (x_idx+1, y_idx), (x_idx, y_idx-1), (x_idx, y_idx+1)]
-            elif connectivity == 8:
-                neighbors = [(x_idx-1, y_idx-1), (x_idx-1, y_idx), (x_idx-1, y_idx+1),
-                            (x_idx, y_idx-1), (x_idx, y_idx+1),
-                            (x_idx+1, y_idx-1), (x_idx+1, y_idx), (x_idx+1, y_idx+1)]
+            cell_dim = 1.001*((max_dims - min_dims)/node_dim) #torch.max
             
-            for neighbor in neighbors:
-                if neighbor in node_indices:
-                    neighbor_id = node_indices[neighbor]
-                    edge_list.append((node_id, neighbor_id))
-                    # Compute distance between nodes
-                    dist = torch.norm(node_positions[node_id] - node_positions[neighbor_id])
-                    edge_attrs.append(dist)
+            if verbose: print("Element Positions", element_positions, "Max/Min:", max_dims, min_dims, "Cell Dim:", cell_dim)
 
-        edge_index = torch.tensor(edge_list, dtype=torch.int64, device=self.device).T  # Shape [2, num_edges] (COO)
-        edge_attrs = torch.tensor(edge_attrs, device=self.device)  # Shape [num_edges]
-        if verbose: print("Edge index:\n", edge_index)
-        if verbose: print("Edge attributes (distances):\n", edge_attrs)
+            # Create a grid of node centers
+            node_positions = []
+            node_indices = {}
+            index = 0
+            for x_idx in range(node_dim):
+                for y_idx in range(node_dim):
+                    node_pos = min_dims + cell_dim*(torch.tensor((x_idx+0.5, y_idx+0.5), device=self.device))
+                    node_positions.append(node_pos.squeeze(0))
+                    node_indices[(x_idx, y_idx)] = index
+                    index += 1
+            
+            num_nodes = len(node_positions)
+            node_positions = torch.stack(node_positions)
+            
+            if verbose: print(f"Env Node positions: \n{node_positions} \nEnv Node Indices: {node_indices}")
 
-        # Create a graph for this environment
-        graph = Data(x=features, edge_index=edge_index, edge_attr=edge_attrs, pos=node_positions).to(self.device)
-        # x_vec.append(features)
-        # edge_index_vec.append(edge_index)
-        # edge_attr_vec.append(edge_attrs)
-        # pos_vec.append(node_pos)
+            # Compute binary feature vectors using square-shaped cells
+            features = torch.zeros((num_nodes, len(element_positions)), dtype=torch.float32, device=self.device)  # [agent_presence, task_presence, obstacle_presence]
+            
+            for j, feature_pos in enumerate(element_positions):
+                for k, node_pos in enumerate(node_positions):
+                    # Check if the feature is within the square cell centered at the node
+                    within_x = torch.abs(feature_pos[0] - node_pos[0]) <= cell_dim[0] / 2
+                    within_y = torch.abs(feature_pos[1] - node_pos[1]) <= cell_dim[1] / 2
+                    if within_x and within_y:
+                        if verbose:
+                            print(f"Feature {feature_pos} within square cell of node {k}: {node_pos}")
+                        features[k, j] = 1
 
-        # print("\n!!! ROB POS:", self.sim_obs[0]["obs_agents"].squeeze(1), "Shape:", self.sim_obs[0]["obs_agents"].squeeze(1).shape)
+            if verbose: print("Node features:\n", features)
 
-        self.graph_batch = Batch.from_data_list([graph])
+            # Compute edge adjacency list & attributes (4-way or 8-way connectivity)
+            edge_list = []
+            edge_attrs = []  # To store distances between connected nodes
+            for (x_idx, y_idx), node_id in node_indices.items():
+                neighbors = []
+                if connectivity == 4:
+                    neighbors = [(x_idx-1, y_idx), (x_idx+1, y_idx), (x_idx, y_idx-1), (x_idx, y_idx+1)]
+                elif connectivity == 8:
+                    neighbors = [(x_idx-1, y_idx-1), (x_idx-1, y_idx), (x_idx-1, y_idx+1),
+                                (x_idx, y_idx-1), (x_idx, y_idx+1),
+                                (x_idx+1, y_idx-1), (x_idx+1, y_idx), (x_idx+1, y_idx+1)]
+                
+                for neighbor in neighbors:
+                    if neighbor in node_indices:
+                        neighbor_id = node_indices[neighbor]
+                        edge_list.append((node_id, neighbor_id))
+                        # Compute distance between nodes
+                        dist = torch.norm(node_positions[node_id] - node_positions[neighbor_id])
+                        edge_attrs.append(dist)
+
+            edge_index = torch.tensor(edge_list, dtype=torch.int64, device=self.device).T  # Shape [2, num_edges] (COO)
+            edge_attrs = torch.tensor(edge_attrs, device=self.device)  # Shape [num_edges]
+            if verbose: print("Edge index:\n", edge_index)
+            if verbose: print("Edge attributes (distances):\n", edge_attrs)
+
+            # Create a graph for this environment
+            graph = Data(x=features, edge_index=edge_index, edge_attr=edge_attrs, pos=node_positions).to(self.device)
+            # x_vec.append(features)
+            # edge_index_vec.append(edge_index)
+            # edge_attr_vec.append(edge_attrs)
+            # pos_vec.append(node_pos)
+
+            # print("\n!!! ROB POS:", self.sim_obs[0]["obs_agents"].squeeze(1), "Shape:", self.sim_obs[0]["obs_agents"].squeeze(1).shape)
+            all_graphs.append(graph)
+
+        # batched_graph = Batch.from_data_list(all_graphs)
+
         self.graph_obs = {
-            "cell_feats": graph["x"],
-            "cell_pos": graph["pos"],
-            "rob_pos": self.sim_obs[0]["obs_agents"].squeeze(1),
+            "cell_feats": torch.stack([g["x"] for g in all_graphs]),
+            "cell_pos": torch.stack([g["pos"] for g in all_graphs]),
+            "rob_pos": self.sim_obs[0]["obs_agents"].squeeze(1), # TODO Sequeeze needed for vectorized env?
             # "edge_attr": torch.stack([g["edge_attr"] for g in all_graphs]),
             # "pos": torch.stack([g["pos"] for g in all_graphs]),
             # "batch": batched_graph.batch,
