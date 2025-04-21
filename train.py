@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
     # RL Hyperparams
     rl_configs = [
-        "conf/algos/ppo_2_2.yaml",
+        "conf/algos/ppo_3_1.yaml",
     ]
 
     # Model Params

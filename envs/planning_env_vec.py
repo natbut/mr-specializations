@@ -30,8 +30,6 @@ class VMASPlanningEnv(EnvBase):
         self.render_fp = None
         self.count = 0
 
-        n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
-
         # TODO Check kwargs passing
         if self.num_envs == 1:
             super().__init__(batch_size=[], device=device)
@@ -43,6 +41,8 @@ class VMASPlanningEnv(EnvBase):
                                 device=self.device,
                                 **scenario_kwargs,
                                 )
+
+            n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
             
             # Define Observation & Action Specs
             self.observation_spec = Composite(
@@ -100,10 +100,12 @@ class VMASPlanningEnv(EnvBase):
                                 device=self.device,
                                 **scenario_kwargs,
                                 )
+        
+            n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
 
             # Define Observation & Action Specs
             self.observation_spec = Composite(
-                obs=Composite(
+                # obs=Composite(
                     cell_feats=Unbounded(
                         shape=(self.num_envs, self.node_dim**2, n_features),
                         dtype=torch.float64,
@@ -119,8 +121,8 @@ class VMASPlanningEnv(EnvBase):
                         dtype=torch.float64,
                         device=device
                     ),
-                    device=device
-                ),
+                #     device=device
+                # ),
                 shape=(self.num_envs,),
                 device=device
             )
@@ -153,7 +155,8 @@ class VMASPlanningEnv(EnvBase):
         """Reset all VMAS worlds and return initial state."""
         self.sim_obs = self.sim_env.reset()
         self._build_obs_graph(node_dim=self.node_dim)
-        obs = TensorDict({"obs": self.graph_obs},
+        obs = TensorDict(self.graph_obs,
+                         batch_size=self.batch_size,
                          device=self.device)
         # out.set("step_count", torch.full(self.batch_size, 1))
         # print("Reset TDict:", obs)
@@ -171,10 +174,11 @@ class VMASPlanningEnv(EnvBase):
         # heuristic_weights = actions.view(self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
         heuristic_weights = actions["action"] # NOTE THESE ARE WEIGHTS FOR EVERY NODE, BUT WE ONLY USE AGENT LOCS
         if self.render:
-            print(f"\nHeuristic Weights:\n {heuristic_weights} Shape: {heuristic_weights.shape}")
+            print(f"\nHeuristic Weights:\n {heuristic_weights} Shape: {heuristic_weights.shape}") # [B, N_AGENTS, N_FEATS]
+        # print("WEIGHTS:", heuristic_weights, "shape:", heuristic_weights.shape)
 
         # Execute and aggregate rewards
-        rewards = torch.zeros((1,), device=self.device)
+        rewards = torch.zeros((self.num_envs, 1), device=self.device)
         frame_list = []
         # Update planning graph (assuming env is dynamic)
         self._build_obs_graph(node_dim=self.node_dim) # TODO for more dynamic envs, update this more frequently (in below loop)
@@ -186,7 +190,7 @@ class VMASPlanningEnv(EnvBase):
             # Compute agent trajectories & get actions
             u_action = []
             for i, agent in enumerate(self.sim_env.agents):
-                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights[i], self.horizon-t, verbose)) # get next actions from agent controllers
+                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights[:,i,:], self.horizon-t, verbose)) # get next actions from agent controllers
             # print("U-ACTION:", u_action)
             self.sim_obs, rews, dones, info = self.sim_env.step(u_action)
             # print("Rewards:", rewards, "rews:", rews, "sum:", torch.sum(torch.stack(rews)))
@@ -199,8 +203,8 @@ class VMASPlanningEnv(EnvBase):
                 )
                 frame_list.append(frame)
 
-            if dones.any():
-                break
+            # if dones.all():
+            #     break
             
         if self.render:
             from moviepy import ImageSequenceClip
@@ -211,7 +215,7 @@ class VMASPlanningEnv(EnvBase):
 
         # Construct next state representation   
         next_state = TensorDict(
-            {"obs": self.graph_obs},
+            self.graph_obs,
             device=self.device,
         )
         rew_tdict = TensorDict(
@@ -240,7 +244,7 @@ class VMASPlanningEnv(EnvBase):
                          node_dim=2,
                          connectivity=4,
                          verbose=False
-                         ) -> Batch:
+                         ):
         """
         Discretize type & pos based observations into a planning graph.
         Obs should be dict with "env_dims": (x, y), "NAME": (x,y), ...
@@ -255,7 +259,7 @@ class VMASPlanningEnv(EnvBase):
             for key in global_obs_dict:
                 if "obs" in key:
                     for entity in global_obs_dict[key]:
-                        element_positions.append(entity.squeeze(0))
+                        element_positions.append(entity[i])
             # print([global_obs_dict[key] for key in global_obs_dict if "obs" in key])
             # element_positions = torch.cat([el[i] for el in [global_obs_dict[key] for key in global_obs_dict if "obs" in key]])
             # print("el pos", torch.stack(element_positions))
@@ -274,7 +278,7 @@ class VMASPlanningEnv(EnvBase):
             for x_idx in range(node_dim):
                 for y_idx in range(node_dim):
                     node_pos = min_dims + cell_dim*(torch.tensor((x_idx+0.5, y_idx+0.5), device=self.device))
-                    node_positions.append(node_pos.squeeze(0))
+                    node_positions.append(node_pos)
                     node_indices[(x_idx, y_idx)] = index
                     index += 1
             
@@ -284,7 +288,7 @@ class VMASPlanningEnv(EnvBase):
             if verbose: print(f"Env Node positions: \n{node_positions} \nEnv Node Indices: {node_indices}")
 
             # Compute binary feature vectors using square-shaped cells
-            features = torch.zeros((num_nodes, len(element_positions)), dtype=torch.float32, device=self.device)  # [agent_presence, task_presence, obstacle_presence]
+            features = torch.zeros((num_nodes, len(element_positions)), dtype=torch.float32, device=self.device)
             
             for j, feature_pos in enumerate(element_positions):
                 for k, node_pos in enumerate(node_positions):
@@ -333,15 +337,16 @@ class VMASPlanningEnv(EnvBase):
             # print("\n!!! ROB POS:", self.sim_obs[0]["obs_agents"].squeeze(1), "Shape:", self.sim_obs[0]["obs_agents"].squeeze(1).shape)
             all_graphs.append(graph)
 
-        # batched_graph = Batch.from_data_list(all_graphs)
+        self.graph_batch = Batch.from_data_list(all_graphs)
+        reshaped_rob_pos = self.sim_obs[0]["obs_agents"].squeeze(1).reshape(self.num_envs, self.sim_env.n_agents, 2)
 
         self.graph_obs = {
             "cell_feats": torch.stack([g["x"] for g in all_graphs]),
             "cell_pos": torch.stack([g["pos"] for g in all_graphs]),
-            "rob_pos": self.sim_obs[0]["obs_agents"].squeeze(1), # TODO Sequeeze needed for vectorized env?
+            "rob_pos": reshaped_rob_pos, # TODO Sequeeze needed for vectorized env?
             # "edge_attr": torch.stack([g["edge_attr"] for g in all_graphs]),
             # "pos": torch.stack([g["pos"] for g in all_graphs]),
             # "batch": batched_graph.batch,
         }
 
-        return graph
+        if verbose: print("Graph Obs:", self.graph_obs)

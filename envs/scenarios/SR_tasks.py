@@ -440,7 +440,7 @@ class Scenario(BaseScenario):
 
     def done(self) -> Tensor:
         # print("Completed tasks:", self.completed_tasks)
-        return self.completed_tasks.any(dim=-1) #self.all_goal_reached
+        return self.completed_tasks.all(dim=-1) #self.all_goal_reached
 
     def info(self, agent: Agent) -> Dict[str, Tensor]:
         return {
