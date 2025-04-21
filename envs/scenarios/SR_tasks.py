@@ -88,7 +88,7 @@ class Scenario(BaseScenario):
         )  # Whether the agents get a global or local reward for going to their goals
         
         self.task_comp_range = kwargs.pop(
-            "task_comp_range", 0.35
+            "task_comp_range", 0.25
         )
         self.tasks_respawn = kwargs.pop(
             "tasks_respawn", False
@@ -105,7 +105,7 @@ class Scenario(BaseScenario):
             )
         
         self.min_distance_between_entities = (
-            self.agent_radius * 2 + 0.05
+            self.agent_radius * 4 + 0.05
         )  # Minimum distance between entities at spawning time
         self.min_collision_distance = (
             0.005  # Minimum distance between entities for collision trigger
