@@ -14,10 +14,9 @@ class PositionalEncoding(nn.Module):
         return self.linear(xy)  # learnable x,y embedding
 
 class EnvironmentTransformer(nn.Module):
-    def __init__(self, num_features, num_robots, num_heuristics, d_model=128, num_heads=4, num_layers=2):
+    def __init__(self, num_features, num_heuristics, d_model=128, num_heads=4, num_layers=2):
         super().__init__()
         self.d_model = d_model
-        self.num_robots = num_robots
         self.num_heuristics = num_heuristics
 
         # Embed features + positional encoding
