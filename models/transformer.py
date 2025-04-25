@@ -28,11 +28,11 @@ class EnvironmentTransformer(nn.Module):
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         # Critic: global value prediction from attended environment
-        self.critic_head = nn.Sequential(
-            nn.Linear(16, d_model),
-            nn.Tanh(),
-            nn.Linear(d_model, 1)
-        )
+        # self.critic_head = nn.Sequential(
+        #     nn.LazyLinear(d_model),
+        #     nn.Tanh(),
+        #     nn.Linear(d_model, 1)
+        # )
 
         # Decoder for heuristic weights per robot
         decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=num_heads, batch_first=True)
@@ -68,13 +68,13 @@ class EnvironmentTransformer(nn.Module):
         # === Encoder ===
         enc_out = self.encoder(x)                              # [B, N, D]
 
-        # print("enc_out shape:", enc_out.shape)
+        # print("enc_out shape:", enc_out.shape)      # [B, N, D]   
 
         # === Critic ===
-        global_embedding = enc_out.mean(dim=-1)                 # [B, D]
-        # print("global embedding shape:", global_embedding.shape)
-        value = self.critic_head(global_embedding)
-        # print("value shape:", value.shape)
+        # global_embedding = enc_out.mean(dim=1)                 # [B, D]
+        # print("global_embedding shape:", global_embedding.shape)
+        # value = self.critic_head(enc_out)  # [B, 1]
+        # print("value:", value)
 
         # === Robot Cell Embedding ===
         # Find closest cell for each robot
@@ -115,6 +115,54 @@ class EnvironmentTransformer(nn.Module):
         # h_weights_loc, h_weights_scale = self.norm_extractor(vals).chunk(2, dim=-1)
 
         if unbatched:
-            return value, h_weights_loc[0], h_weights_scale[0] # removes batch dim from actions
+            return h_weights_loc[0], h_weights_scale[0] # removes batch dim from actions
         else:
-            return value, h_weights_loc, h_weights_scale 
+            return h_weights_loc, h_weights_scale 
+
+
+
+class EnvironmentCriticTransformer(nn.Module):
+    def __init__(self, num_features, d_model=128, num_heads=4, num_layers=2, use_attention_pool=True):
+        super().__init__()
+        self.d_model = d_model
+        self.use_attention_pool = use_attention_pool
+
+        self.feature_embed = nn.Linear(num_features, d_model)
+        self.pos_embed = PositionalEncoding(d_model)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=num_heads, batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        if use_attention_pool:
+            self.attn_pool = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
+            self.query = nn.Parameter(torch.randn(1, 1, d_model))  # learned query
+
+        self.critic_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.Tanh(),
+            nn.Linear(d_model, 1)
+        )
+
+    def forward(self, cell_feats, cell_pos):
+        """
+        cell_feats: [B, N, F]
+        cell_pos:   [B, N, 2]
+        """
+        feat_emb = self.feature_embed(cell_feats)      # [B, N, D]
+        pos_emb = self.pos_embed(cell_pos)             # [B, N, D]
+        x = feat_emb + pos_emb                         # [B, N, D]
+
+        enc_out = self.encoder(x)                      # [B, N, D]
+
+        if self.use_attention_pool:
+            B = enc_out.size(0)
+            q = self.query.expand(B, -1, -1)           # [B, 1, D]
+            attn_out, _ = self.attn_pool(q, enc_out, enc_out)  # [B, 1, D]
+            pooled = attn_out.squeeze(1)               # [B, D]
+        else:
+            pooled = enc_out.mean(dim=1)               # [B, D]
+
+        value = self.critic_head(pooled)               # [B, 1]
+        return value
