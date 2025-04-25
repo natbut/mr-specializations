@@ -119,43 +119,45 @@ class PlanningAgent(Agent):
             num_nodes = len(graph.pos)
             parents = {}
             g_score = {node: float('inf') for node in range(num_nodes)}
+            h_score = {node: float('inf') for node in range(num_nodes)}
             f_score = {node: float('inf') for node in range(num_nodes)}
             
             # TODO Heuristic evaluation
             g_score[start_idx] = 0.0
-            f_score[start_idx] = g_score[start_idx] + self._compute_dist_heuristics_val(graph.pos[start_idx],
-                                                                                   graph.pos,
-                                                                                   graph.x,
-                                                                                   heuristic_weights[i]
-                                                                                   )
+            h_score[start_idx] = self._compute_dist_heuristics_val(graph.pos[start_idx],
+                                                                    graph.pos,
+                                                                    graph.x,
+                                                                    heuristic_weights[i]
+                                                                    )
+            f_score[start_idx] = g_score[start_idx] + h_score[start_idx]
             
             # Init priority queue & score tracking
             open_set = [(f_score[start_idx], start_idx)] # (f, id)
 
             count = 0
             path = []
+            min_h = float('inf')
+            min_node = None
             while open_set:
                 # Get node with lowest f_score, remove from queue
                 if verbose: print("Open set:", open_set)
-                _, current = min(open_set, key=lambda x: f_score[x[1]])
-                # open_set = [node for node in open_set if node[1] != current]
+                _, current = min(open_set, key=lambda x: h_score[x[1]])
+                open_set = [node for node in open_set if node[1] != current]
                 if verbose: print("Expanding", current)
-                path.append(current) # NOTE we are appending lowest-cost nodes to path
+
+                if h_score[current] < min_h: # NOTE we are appending lowest-cost nodes to path
+                    path.append(current) 
+                    min_h = h_score[current]
+                    min_node = current
+                else:
+                    path.append(min_node)
 
                 if count == horizon:
-                    # Reconstruct path
-                    # path = []
-                    # while current in parents:
-                    #     path.append(current)
-                    #     current = parents[current]
-                    # path.append(start_idx)
-                    # all_traj.append(path[:])
                     break
 
                 neighbors = graph.edge_index[1][graph.edge_index[0] == current]
                 # print(f"Neighbors of {current}: {neighbors}. \n Edge Index: \n{graph.edge_index}")
 
-                open_set = [] # TODO NOTE THAT THIS WAS ADDED TO PREVENT SOLUTION FROM JUMPING ACROSS THE MAP
                 for neighbor in neighbors:
                     neighbor = neighbor.item()
                     # TODO update to use edge_attr to add to g_score
@@ -163,18 +165,18 @@ class PlanningAgent(Agent):
                     if tentative_g_score < g_score[neighbor]: # faster path found
                         parents[neighbor] = current
                         g_score[neighbor] = tentative_g_score
-                        # TODO heuristic evaluation
-                        f_score[neighbor] = g_score[neighbor] + self._compute_dist_heuristics_val(graph.pos[neighbor],
-                                                                                            graph.pos,
-                                                                                            graph.x,
-                                                                                            heuristic_weights[i]
-                                                                                            )
+                        h_score[neighbor] = self._compute_dist_heuristics_val(graph.pos[neighbor],
+                                                                                graph.pos,
+                                                                                graph.x,
+                                                                                heuristic_weights[i]
+                                                                                )
+                        f_score[neighbor] = g_score[neighbor] + h_score[neighbor]
 
-                        if neighbor not in [n[1] for n in open_set]:
+                        if neighbor not in [n[1] for n in open_set]: #h_score[neighbor] < h_score[current]: #
                             open_set.append((f_score[neighbor], neighbor))
 
-                if len(open_set) == 0: # TODO NOTE THAT THIS WAS ADDED TO PREVENT SOLUTION FROM JUMPING ACROSS THE MAP
-                    open_set.append((f_score[current], current))
+                # if len(open_set) == 0: # TODO NOTE THAT THIS WAS ADDED TO PREVENT SOLUTION FROM JUMPING ACROSS THE MAP
+                #     open_set.append((f_score[current], current))
 
                 count += 1
 
@@ -233,24 +235,35 @@ class PlanningAgent(Agent):
         # Make plan
         if self.trajs == []:
             self.trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
+            self.traj_idx = [0 for _ in range(heuristic_weights.shape[0])]
         else:
             # print("Plan exists, following:", self.trajs)
             for i, traj in enumerate(self.trajs):
-                if traj == []:
-                    self.trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
-                if start_node_idxs[i] == traj[1] and norm_dists[i][start_node_idxs[i]] < 0.05:
-                    # print(f"NODE {start_node_idxs[i]} REACHED; remaining traj: {traj[1:]}")
-                    self.trajs[i] = traj[1:]
+                # if traj == []:
+                #     self.trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
+                #     self.traj_idx[i] = 0
+
+                if start_node_idxs[i] == traj[self.traj_idx[i]] and norm_dists[i][start_node_idxs[i]] < 0.05: #traj[1]
+                    # print(f"NODE {start_node_idxs[i]} REACHED")
+                    # self.trajs[i] = traj[1:]
+                    self.traj_idx[i] = min(self.traj_idx[i] + 1, len(traj)-1)
                 
 
         # Find best control action (given current pos/vel and traj)
         # Take action towards reaching next node in traj
-        next_node_idx = [traj[1] for traj in self.trajs] # test commanding to node 0 [0 for traj in trajs]
+        # print("TRajs:", self.trajs)
+        # print("TRajs Idx:", self.traj_idx)
+        next_node_idx = [traj[self.traj_idx[i]] for i, traj in enumerate(self.trajs)] # test commanding to node 0 [0 for traj in trajs]
+        print("Next node idxs:", next_node_idx)
         cur_pos = self.state.pos
         if self.batch_dim != 1:
             next_pos = torch.stack([graph.pos[next_node_idx[i]] for i, graph in enumerate(graphs_list)])
         else:
             next_pos = graphs_list[0].pos[next_node_idx[0]]
+
+        print("Next pos:", next_pos)
+        print("Cur pos:", cur_pos)
+        
         pos_diff = next_pos-cur_pos
 
         u_action = torch.where(pos_diff > 1.0, 1.0, pos_diff)

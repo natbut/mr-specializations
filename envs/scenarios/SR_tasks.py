@@ -186,6 +186,7 @@ class Scenario(BaseScenario):
                     u_multiplier=[3, 3],  # Action multipliers
                     dynamics=Holonomic(),  # If you go to its class you can see it has 2 actions: force_x, and force_y
                 )
+                
             elif i < self.n_agents_holonomic + self.n_agents_diff_drive:
                 agent = PlanningAgent(
                     name=f"diff_drive_{i - self.n_agents_holonomic}",
@@ -232,7 +233,7 @@ class Scenario(BaseScenario):
         ################
         self.tasks = []
         for i in range(self.n_tasks):
-            color = self.task_color
+            color = known_colors[i] #self.task_color
             task = Landmark(
                 name=f"goal_{i}",
                 collide=False,
