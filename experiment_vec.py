@@ -24,7 +24,7 @@ from torchrl.objectives.value import GAE
 from tqdm import tqdm
 
 from envs.planning_env_vec import VMASPlanningEnv
-from models.transformer import EnvironmentTransformer
+from models.transformer import EnvironmentTransformer, EnvironmentCriticTransformer
 
 
 def load_yaml_to_kwargs(file_path: str) -> None:
@@ -116,33 +116,20 @@ def train_PPO(scenario,
         env = TransformedEnv(
             base_env,
             Compose(
-                # normalize observations
-                # ObservationNorm(in_keys=[("obs", "cell_feats")]),
-                # ObservationNorm(in_keys=[("obs", "cell_pos")]),
-                # ObservationNorm(in_keys=[("obs", "rob_pos")]),
-                DoubleToFloat(in_keys=[("cell_feats"), ("cell_pos"), ("rob_pos")]),
+                ObservationNorm(in_keys=["cell_feats"]),
+                ObservationNorm(in_keys=["cell_pos"]),
+                ObservationNorm(in_keys=["rob_pos"]),
+                DoubleToFloat(in_keys=["cell_feats", "cell_pos", "rob_pos"]),
                 StepCounter(),
             ),
-            device=device
+            device=device,
         )
-        # env.append_transform(
-        #     CatTensors(in_keys=[
-        #         ("obs", "cell_feats"),
-        #         ("obs", "cell_pos"),
-        #         ("obs", "rob_pos"),
-        #         ],
-        #                out_keys=["observation"]
-        #     )
-        # )
-        # env.append_transform(StepCounter())
 
-        # Initialize stats
-        # env.transform[0].init_stats(num_iter=10)#, reduce_dim=0, cat_dim=0, keep_dims=False)
-        # print("normalization constant shape:\n", env.transform[0].loc.shape)
-        # env.transform[1].init_stats(num_iter=10)#, reduce_dim=0, cat_dim=0, keep_dims=False)
-        # print("normalization constant shape:\n", env.transform[1].loc.shape)
-        # env.transform[2].init_stats(num_iter=10)#, reduce_dim=0, cat_dim=0, keep_dims=False)
-        # print("normalization constant shape:\n", env.transform[2].loc.shape)
+        # initialize observation norm stats
+        for t in env.transform:
+            if isinstance(t, ObservationNorm):
+                print("Normalizing obs", t.in_keys)
+                t.init_stats(num_iter=100, reduce_dim=[0,1], cat_dim=0)#, reduce_dim=0, cat_dim=0, keep_dims=False)
 
         # # Evaluate environment initialization
         # print("normalization constant shape:\n", env.transform[0].loc.shape)
@@ -159,28 +146,25 @@ def train_PPO(scenario,
         print("Shape of the rollout TensorDict:", rollout.batch_size)
 
         ### ACTOR & CRITIC POLICY MODULES ###
-
-        # num_cells = model_config["num_cells"]
         num_features = model_config["num_features"]
         num_heuristics = model_config["num_heuristics"]
         d_model = model_config["d_model"]
-        #num_heads
-        #num_layers
-        
-        mat = EnvironmentTransformer(num_features=num_features,
+
+        tf_act = EnvironmentTransformer(num_features=num_features,
                                            num_heuristics=num_heuristics,
                                            d_model=d_model,
                                            ).to(device)
+        
+        tf_crit = EnvironmentCriticTransformer(num_features=num_features,
+                                                d_model=d_model,
+                                                use_attention_pool=True,
+                                                ).to(device)
 
         policy_module = TensorDictModule(
-            mat,
+            tf_act,
             in_keys=[("cell_feats"), ("cell_pos"), ("rob_pos")],
-            out_keys=["foo","loc","scale"]
+            out_keys=["loc","scale"]
         )
-        # print("LOW:", env.action_spec_unbatched.space.low)
-        # print("HIGH:", env.action_spec_unbatched.space.high)
-
-        # break
 
         policy_module = ProbabilisticActor( # Actions sampled from dist during exploration
             module=policy_module,
@@ -196,9 +180,9 @@ def train_PPO(scenario,
         )
 
         value_module = ValueOperator(
-            module=mat,
-            in_keys=[("cell_feats"), ("cell_pos"), ("rob_pos")],
-            out_keys=["state_value","foo","bar"]
+            module=tf_crit,
+            in_keys=[("cell_feats"), ("cell_pos")],
+            out_keys=["state_value"]
         )
 
         print("Running policy:", policy_module(env.reset()))
@@ -219,7 +203,7 @@ def train_PPO(scenario,
         )
 
         advantage_module = GAE(
-            gamma=gamma, lmbda=lmbda, value_network=value_module, average_gae=True
+            gamma=gamma, lmbda=lmbda, value_network=value_module, average_gae=True,
         )
 
         loss_module = ClipPPOLoss(
@@ -229,8 +213,9 @@ def train_PPO(scenario,
             entropy_bonus=bool(entropy_eps),
             entropy_coef=entropy_eps,
             # these keys match by default but we set this for completeness
-            critic_coef=1.0,
+            critic_coef=1.0, #0.01,
             loss_critic_type="smooth_l1",
+            clip_value=False,
         )
 
         optim = torch.optim.Adam(loss_module.parameters(), lr)
@@ -248,41 +233,41 @@ def train_PPO(scenario,
         # designed to collect:
         for i, tensordict_data in enumerate(collector):
             # we now have a batch of data to work with. Let's learn something from it.
-            # print("\n!! Running Training")
             for ep in range(num_epochs):
-                # print("=== EPOCH:", ep, "===")
                 # We'll need an "advantage" signal to make PPO work.
                 # We re-compute it at each epoch as its value depends on the value
                 # network which is updated in the inner loop.
 
-                # print("!! TDict Data:\n", tensordict_data)
+                data = tensordict_data.flatten(0,1)
+                data["next","reward"] = data["next","reward"] / (0.9*60) #data["next", "reward"].max()
 
-                flat_batch = tensordict_data.reshape(-1, *tensordict_data.shape[2:])
-                # print("!! Flat Batch:\n", flat_batch)
                 # Compute advantage values and add to tdict
-                advantage_module(flat_batch)
+                advantage_module(data)
 
-                # print("Sample log prob:", tensordict_data["sample_log_prob"])
-                # print("Advantage:", tensordict_data["advantage"])
-                
-                data_view = tensordict_data.reshape(-1)
+                if ep == 0:
+                    print("\nTensorDict data (flat):\n", data)
+                    print("\nTraj IDs:\n", data["collector", "traj_ids"][:10].cpu().tolist())
+                    print("\nSample log prob:\n", data["sample_log_prob"][:10].cpu().tolist())
+                    print("\nAdvantage:\n", data["advantage"][:10].cpu().tolist())
+                    print("\nstate_value:\n", data["state_value"][:10].cpu().tolist())
+                    print("\nvalue_target:\n", data["value_target"][:10].cpu().tolist())
+                    print("\nreward:\n", data["next", "reward"][:10].cpu().tolist())
+                    print("\ndone:\n", data["next", "done"][:10].cpu().tolist())
 
-                replay_buffer.extend(data_view.to(device))
+                # data_view = tensordict_data.reshape(-1)
+
+                replay_buffer.extend(data.to(device))
 
                 for _ in range(frames_per_batch // sub_batch_size):
                     subdata = replay_buffer.sample(sub_batch_size)
-                    # print("\nSUBDATA:", subdata)
-                    # print("Sample log prob:", subdata["sample_log_prob"])
-                    # print("Advantage:", subdata["advantage"])
+                    # print("SUBDATA:\n", subdata)
+                    # print("Subdata Advantage:", subdata["advantage"])
                     loss_vals = loss_module(subdata.to(device))
                     loss_value = (
                         loss_vals["loss_objective"]
                         + loss_vals["loss_critic"]
                         + loss_vals["loss_entropy"]
                     )
-                    # print("\nLOSS Obj:", loss_vals["loss_objective"])
-                    # print("LOSS Crit:", loss_vals["loss_critic"])
-                    # print("LOSS Entr:", loss_vals["loss_entropy"])
                     logs["loss_objective"].append(loss_vals["loss_objective"].item())
                     logs["loss_critic"].append(loss_vals["loss_critic"].item())
                     logs["loss_entropy"].append(loss_vals["loss_entropy"].item())
@@ -290,6 +275,7 @@ def train_PPO(scenario,
                         run.log({"train/loss_objective": loss_vals["loss_objective"].item()})
                         run.log({"train/loss_critic": loss_vals["loss_critic"].item()})
                         run.log({"train/loss_entropy": loss_vals["loss_entropy"].item()})
+                        # run.log({"train/value_clip_fraction": loss_vals["value_clip_fraction"].item()})
                     # Optimization: backward, grad clipping and optimization step
                     loss_value.backward()
                     # this is not strictly mandatory but it's good practice to keep
@@ -299,18 +285,22 @@ def train_PPO(scenario,
                     optim.zero_grad()
 
 
-            logs["reward"].append(tensordict_data["next", "reward"].mean().item())
-            pbar.update(tensordict_data.numel())
+            logs["reward"].append(data["next", "reward"].mean().item())
+            pbar.update(data.numel())
             cum_reward_str = (
                 f"| Training average reward={logs['reward'][-1]: 4.4f} (init={logs['reward'][0]: 4.4f})"
             )
-            logs["step_count"].append(tensordict_data["step_count"].max().item())
+            logs["step_count"].append(data["step_count"].max().item())
             logs["lr"].append(optim.param_groups[0]["lr"])
             # stepcount_str = f"step count (max): {logs['step_count'][-1]}"
             if use_wandb:
-                run.log({"train/mean_reward": tensordict_data["next", "reward"].mean().item()})
-                run.log({"train/step_count": tensordict_data["step_count"].max().item()})
+                run.log({"train/mean_reward": data["next", "reward"].mean().item()})
+                run.log({"train/step_count": data["step_count"].max().item()})
                 run.log({"train/lr": optim.param_groups[0]["lr"]})
+                run.log({"train/advantage_mean_abs": data["advantage"].abs().mean().item()})
+                run.log({"train/advantage_std": data["advantage"].std().item()})
+                run.log({"train/state_value_mean": data["state_value"].mean().item()})
+                run.log({"train/value_target_mean": data["value_target"].mean().item()})
 
             lr_str = f"lr policy: {logs['lr'][-1]: 4.4f}"
             if i % 10 == 0:
@@ -338,7 +328,6 @@ def train_PPO(scenario,
                     eval_str = (
                         f"eval cumulative reward: {logs['eval reward (sum)'][-1]: 4.4f} "
                         f"(init: {logs['eval reward (sum)'][0]: 4.4f})"
-                        # f"eval step-count: {logs['eval step_count'][-1]}"
                     )
                     if use_wandb:
                         run.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})
@@ -353,7 +342,8 @@ def train_PPO(scenario,
                         os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
                         torch.save({
                             'step': i,
-                            'tf_state_dict': mat.state_dict(),
+                            'actor_state_dict': tf_act.state_dict(),
+                            'critic_state_dict': tf_crit.state_dict(),
                             'optimizer_state_dict': optim.state_dict(),
                             'scheduler_state_dict': scheduler.state_dict(),
                             'logs': logs,
@@ -368,7 +358,8 @@ def train_PPO(scenario,
                 os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
                 torch.save({
                     'step': i,
-                    'tf_state_dict': mat.state_dict(),
+                    'actor_state_dict': tf_act.state_dict(),
+                    'critic_state_dict': tf_crit.state_dict(),
                     'optimizer_state_dict': optim.state_dict(),
                     'scheduler_state_dict': scheduler.state_dict(),
                     'logs': logs,
@@ -383,19 +374,3 @@ def train_PPO(scenario,
 
         if use_wandb:
             run.finish()
-
-        ### SHOW RESULTS ###
-        # plt.figure(figsize=(10, 10))
-        # plt.subplot(2, 2, 1)
-        # plt.plot(logs["reward"])
-        # plt.title("training rewards (average)")
-        # plt.subplot(2, 2, 2)
-        # plt.plot(logs["loss_objective"])
-        # plt.title("Obj loss (training)")
-        # plt.subplot(2, 2, 3)
-        # plt.plot(logs["eval reward (sum)"])
-        # plt.title("Return (test)")
-        # plt.subplot(2, 2, 4)
-        # plt.plot(logs["loss_critic"])
-        # plt.title("Critic loss (training)")
-        # plt.show()

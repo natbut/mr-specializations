@@ -203,8 +203,8 @@ class VMASPlanningEnv(EnvBase):
                 )
                 frame_list.append(frame)
 
-            # if dones.all():
-            #     break
+            if dones.all():
+                break 
             
         if self.render:
             from moviepy import ImageSequenceClip
@@ -212,6 +212,8 @@ class VMASPlanningEnv(EnvBase):
             clip = ImageSequenceClip(frame_list, fps=fps)
             clip.write_gif(f"{self.render_fp}_{self.count}.gif", fps=fps)
             self.count += 1
+
+        # print("Rewards:", rewards, "Dones:", torch.stack([done for done in dones[0]]))
 
         # Construct next state representation   
         next_state = TensorDict(
@@ -223,7 +225,7 @@ class VMASPlanningEnv(EnvBase):
             device=self.device,
         )
         done_tdict = TensorDict(
-            {"done": self.scenario.done()},
+            {"done": dones.unsqueeze(1)},
             device=self.device,
         )
 
@@ -288,7 +290,11 @@ class VMASPlanningEnv(EnvBase):
             if verbose: print(f"Env Node positions: \n{node_positions} \nEnv Node Indices: {node_indices}")
 
             # Compute binary feature vectors using square-shaped cells
-            features = torch.zeros((num_nodes, len(element_positions)), dtype=torch.float32, device=self.device)
+            features = torch.full((num_nodes, len(element_positions)),
+                                  0.0001,
+                                  dtype=torch.float32,
+                                  device=self.device
+                                  )
             
             for j, feature_pos in enumerate(element_positions):
                 for k, node_pos in enumerate(node_positions):

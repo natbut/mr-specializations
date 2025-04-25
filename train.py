@@ -14,17 +14,17 @@ if __name__ == "__main__":
         "conf/scenarios/SR_tasks.yaml",
     ]
     env_configs = [
-        "conf/envs/planning_env_vec.yaml",
+        "conf/envs/planning_env_vec_2.yaml",
     ]
 
     # RL Hyperparams
     rl_configs = [
-        "conf/algos/ppo_3_1.yaml",
+        "conf/algos/ppo_3_3.yaml",
     ]
 
     # Model Params
     model_configs = [
-        "conf/models/mat_1.yaml",
+        "conf/models/mat_2.yaml",
     ]
 
     
