@@ -21,7 +21,7 @@ if __name__ == "__main__":
         "conf/scenarios/SR_tasks.yaml",
     ]
     env_configs = [
-        "conf/envs/planning_env_vec_3.yaml",
+        "conf/envs/planning_env_vec_2.yaml",
     ]
 
     env = VMASPlanningEnv(Scenario(),

@@ -254,15 +254,15 @@ class PlanningAgent(Agent):
         # print("TRajs:", self.trajs)
         # print("TRajs Idx:", self.traj_idx)
         next_node_idx = [traj[self.traj_idx[i]] for i, traj in enumerate(self.trajs)] # test commanding to node 0 [0 for traj in trajs]
-        print("Next node idxs:", next_node_idx)
+        # print("Next node idxs:", next_node_idx)
         cur_pos = self.state.pos
         if self.batch_dim != 1:
             next_pos = torch.stack([graph.pos[next_node_idx[i]] for i, graph in enumerate(graphs_list)])
         else:
             next_pos = graphs_list[0].pos[next_node_idx[0]]
 
-        print("Next pos:", next_pos)
-        print("Cur pos:", cur_pos)
+        # print("Next pos:", next_pos)
+        # print("Cur pos:", cur_pos)
         
         pos_diff = next_pos-cur_pos
 
