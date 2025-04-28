@@ -239,7 +239,7 @@ def train_PPO(scenario,
                 # network which is updated in the inner loop.
 
                 data = tensordict_data.flatten(0,1)
-                data["next","reward"] = data["next","reward"] / (0.9*60) #data["next", "reward"].max()
+                data["next","reward"] = data["next","reward"] #/ (0.9*60) #data["next", "reward"].max()
 
                 # Compute advantage values and add to tdict
                 advantage_module(data)
@@ -299,8 +299,9 @@ def train_PPO(scenario,
                 run.log({"train/lr": optim.param_groups[0]["lr"]})
                 run.log({"train/advantage_mean_abs": data["advantage"].abs().mean().item()})
                 run.log({"train/advantage_std": data["advantage"].std().item()})
-                run.log({"train/state_value_mean": data["state_value"].mean().item()})
+                run.log({"train/state_value_mean": data["state_value"].mean().item()}) 
                 run.log({"train/value_target_mean": data["value_target"].mean().item()})
+                run.log({f"actions/rob{j}_action{i}_mean": data["action"][:, j, i].mean().item() for i in range(num_heuristics) for j in range(2)})
 
             lr_str = f"lr policy: {logs['lr'][-1]: 4.4f}"
             if i % 10 == 0:

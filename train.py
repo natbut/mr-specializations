@@ -14,7 +14,7 @@ if __name__ == "__main__":
         "conf/scenarios/SR_tasks.yaml",
     ]
     env_configs = [
-        "conf/envs/planning_env_vec_2.yaml",
+        "conf/envs/planning_env_vec_3.yaml",
     ]
 
     # RL Hyperparams
@@ -33,7 +33,7 @@ if __name__ == "__main__":
               env_configs,
               rl_configs,
               model_configs,
-              use_wandb=True
+              use_wandb=False
               )
 
 
