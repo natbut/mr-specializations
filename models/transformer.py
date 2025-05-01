@@ -14,7 +14,7 @@ class PositionalEncoding(nn.Module):
         return self.linear(xy)  # learnable x,y embedding
 
 class EnvironmentTransformer(nn.Module):
-    def __init__(self, num_features, num_heuristics, d_model=128, num_heads=4, num_layers=2):
+    def __init__(self, num_features, num_heuristics, d_model=128, d_feedforward=2048, num_heads=4, num_layers=2):
         super().__init__()
         self.d_model = d_model
         self.num_heuristics = num_heuristics
@@ -24,21 +24,17 @@ class EnvironmentTransformer(nn.Module):
         self.pos_embed = PositionalEncoding(d_model)
         
         # Transformer encoder: attends over all environment cells
-        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=num_heads, batch_first=True)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=num_heads, dim_feedforward=d_feedforward, batch_first=True)
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-        # Critic: global value prediction from attended environment
-        # self.critic_head = nn.Sequential(
-        #     nn.LazyLinear(d_model),
-        #     nn.Tanh(),
-        #     nn.Linear(d_model, 1)
-        # )
-
         # Decoder for heuristic weights per robot
-        decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=num_heads, batch_first=True)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=num_heads, dim_feedforward=d_feedforward, batch_first=True)
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
 
-        self.output_head = nn.Linear(d_model, 2*num_heuristics)
+        self.output_head = nn.Sequential(
+            nn.Linear(d_model, 2*num_heuristics),
+            nn.Softmax(dim=-1)  # softmax over heuristics
+        )
 
         self.norm_extractor = NormalParamExtractor()
 
@@ -70,12 +66,6 @@ class EnvironmentTransformer(nn.Module):
 
         # print("enc_out shape:", enc_out.shape)      # [B, N, D]   
 
-        # === Critic ===
-        # global_embedding = enc_out.mean(dim=1)                 # [B, D]
-        # print("global_embedding shape:", global_embedding.shape)
-        # value = self.critic_head(enc_out)  # [B, 1]
-        # print("value:", value)
-
         # === Robot Cell Embedding ===
         # Find closest cell for each robot
         with torch.no_grad():
@@ -104,14 +94,14 @@ class EnvironmentTransformer(nn.Module):
 
         # === Heuristic output ===
         vals = self.output_head(decoder_out)
-        # print("Token mlp vals:\n", vals)
+        # print("Token mlp vals (softmaxed):\n", vals)
         # print("Token mlp vals shape:\n", vals.shape)
         # h_weights_loc, h_weights_scale = vals[:, :, :vals.shape[-1]//2], vals[:, :, vals.shape[-1]//2:]     # 2*[B, R, num_heuristics]
         # print("h_weights loc:\n", h_weights_loc)
         # print("h_weights scale:\n", h_weights_scale)
 
         h_weights_loc, h_weights_scale = self.norm_extractor(vals)
-        # print("Extracted params:\n", extracted_params)
+        # print("Extracted params:\n", h_weights_loc, h_weights_scale)
         # h_weights_loc, h_weights_scale = self.norm_extractor(vals).chunk(2, dim=-1)
 
         if unbatched:

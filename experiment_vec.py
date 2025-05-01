@@ -107,6 +107,7 @@ def train_PPO(scenario,
         entropy_eps = rl_config["entropy_eps"]
 
         # DEFINE ENVIRONMENT #
+        num_envs = env_config["num_envs"]
         base_env = VMASPlanningEnv(scenario,
                                     device=device,
                                     env_kwargs=env_config,
@@ -129,7 +130,7 @@ def train_PPO(scenario,
         for t in env.transform:
             if isinstance(t, ObservationNorm):
                 print("Normalizing obs", t.in_keys)
-                t.init_stats(num_iter=100, reduce_dim=[0,1], cat_dim=0)#, reduce_dim=0, cat_dim=0, keep_dims=False)
+                t.init_stats(num_iter=10*num_envs, reduce_dim=[0,1], cat_dim=0) # num_iter should be divisible (?) or match (?) horizon in env
 
         # # Evaluate environment initialization
         # print("normalization constant shape:\n", env.transform[0].loc.shape)
@@ -148,15 +149,18 @@ def train_PPO(scenario,
         ### ACTOR & CRITIC POLICY MODULES ###
         num_features = model_config["num_features"]
         num_heuristics = model_config["num_heuristics"]
+        d_feedforward = model_config["d_feedforward"]
         d_model = model_config["d_model"]
 
         tf_act = EnvironmentTransformer(num_features=num_features,
                                            num_heuristics=num_heuristics,
+                                           d_feedforward=d_feedforward,
                                            d_model=d_model,
                                            ).to(device)
         
         tf_crit = EnvironmentCriticTransformer(num_features=num_features,
                                                 d_model=d_model,
+                                                
                                                 use_attention_pool=True,
                                                 ).to(device)
 
@@ -239,7 +243,8 @@ def train_PPO(scenario,
                 # network which is updated in the inner loop.
 
                 data = tensordict_data.flatten(0,1)
-                data["next","reward"] = data["next","reward"] #/ (0.9*60) #data["next", "reward"].max()
+                # data["next","reward"] = data["next","reward"] # / (0.9*60) #data["next", "reward"].max()
+                data["sample_log_prob"] = data["sample_log_prob"].sum(dim=1).unsqueeze(-1)
 
                 # Compute advantage values and add to tdict
                 advantage_module(data)
@@ -301,10 +306,10 @@ def train_PPO(scenario,
                 run.log({"train/advantage_std": data["advantage"].std().item()})
                 run.log({"train/state_value_mean": data["state_value"].mean().item()}) 
                 run.log({"train/value_target_mean": data["value_target"].mean().item()})
-                run.log({f"actions/rob{j}_action{i}_mean": data["action"][:, j, i].mean().item() for i in range(num_heuristics) for j in range(2)})
+                run.log({f"actions/rob{j}_action{i}_mean": data["action"][:, j, i].mean().item() for i in range(num_heuristics) for j in range(base_env.sim_env.n_agents)})
 
             lr_str = f"lr policy: {logs['lr'][-1]: 4.4f}"
-            if i % 10 == 0:
+            if i % 5 == 0:
                 # print("\n!! Running Evaluation")
                 env.base_env.render = True
                 env.base_env.count = 0
