@@ -193,8 +193,8 @@ class VMASPlanningEnv(EnvBase):
                 u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights[:,i,:], self.horizon-t, verbose)) # get next actions from agent controllers
             # print("U-ACTION:", u_action)
             self.sim_obs, rews, dones, info = self.sim_env.step(u_action)
-            # print("Rewards:", rewards, "rews:", rews, "sum:", torch.sum(torch.stack(rews)))
-            rewards += torch.sum(torch.stack(rews))
+            # print("Rewards:", rewards, "stacked rews:", rews, "sum:", rews.sum(dim=0))
+            rewards += torch.stack(rews).sum(dim=0)
 
             if self.render:
                 frame = self.sim_env.render(
@@ -213,8 +213,10 @@ class VMASPlanningEnv(EnvBase):
             clip.write_gif(f"{self.render_fp}_{self.count}.gif", fps=fps)
             self.count += 1
 
-        # print("Rewards:", rewards, "Dones:", torch.stack([done for done in dones[0]]))
+        # print("Rewards:", rewards, "\nDones:", dones.unsqueeze(1))
+        # rewards = rewards / (self.horizon*(self.sim_env.n_agents*0.9)) # NOTE ADDED NORMALIZATION FACTOR TO MAX PER-STEP REWARD
 
+        self._build_obs_graph(node_dim=self.node_dim)
         # Construct next state representation   
         next_state = TensorDict(
             self.graph_obs,

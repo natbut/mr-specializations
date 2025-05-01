@@ -46,7 +46,7 @@ class Scenario(BaseScenario):
         self.plot_grid = False  # You can use this to plot a grid under the rendering for visualization purposes
 
         self.n_agents_holonomic = kwargs.pop(
-            "n_agents_holonomic", 1
+            "n_agents_holonomic", 2
         )  # Number of agents with holonomic dynamics
         self.n_agents_diff_drive = kwargs.pop(
             "n_agents_diff_drive", 0
@@ -94,10 +94,10 @@ class Scenario(BaseScenario):
             "tasks_respawn", False
         )
         self.complete_task_coeff = kwargs.pop(
-            "task_reward", 1
+            "task_reward", 0.1
         )
         self.time_penalty = kwargs.pop(
-            "time_penalty", -0.1
+            "time_penalty", -0.11
         )
 
         self.agent_radius = kwargs.pop(
@@ -384,7 +384,9 @@ class Scenario(BaseScenario):
             self.shared_tasks_rew if self.shared_rew else agent.tasks_rew
         )  # Choose global or local reward based on configuration
 
-        return tasks_reward + self.time_rew
+        rews = tasks_reward + self.time_rew
+
+        return rews.unsqueeze(-1) # [B,1]
     
     def agent_tasks_reward(self, agent):
         """Reward for covering targets"""
