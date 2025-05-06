@@ -14,7 +14,7 @@ with cProfile.Profile() as pr:
         # Env, Scenario & params
         scenario = Scenario()  
         scenario_configs = [
-            "conf/scenarios/SR_tasks_3.yaml",
+            "conf/scenarios/SR_tasks_4.yaml",
         ]
         env_configs = [
             "conf/envs/planning_env_vec_3.yaml",
@@ -22,16 +22,16 @@ with cProfile.Profile() as pr:
 
         # RL Hyperparams
         rl_configs = [
-            "conf/algos/ppo_3_5.yaml",
+            "conf/algos/ppo_3_7.yaml",
         ]
 
         # Model Params
         model_configs = [
-            "conf/models/mat_4.yaml",
+            "conf/models/mat_5.yaml",
         ]
 
         
-        train_PPO(scenario,
+        train_PPO(scenario, 
                 scenario_configs,
                 env_configs,
                 rl_configs,
@@ -57,3 +57,4 @@ with cProfile.Profile() as pr:
     # 2. Communication overhead (especially for multiagent)
     # 3 Information mismatch: Mothership/Agent priorization observation space is different
     # from the operating agent's observation space.
+    

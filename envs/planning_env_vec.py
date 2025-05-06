@@ -170,6 +170,7 @@ class VMASPlanningEnv(EnvBase):
         2. Execute the trajectories for the given horizon.
         3. Return next state, rewards, and termination status.
         """
+
         # Process actions (heuristic weights)
         # heuristic_weights = actions.view(self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
         heuristic_weights = actions["action"] # NOTE THESE ARE WEIGHTS FOR EVERY NODE, BUT WE ONLY USE AGENT LOCS
@@ -179,6 +180,8 @@ class VMASPlanningEnv(EnvBase):
 
         # Execute and aggregate rewards
         rewards = torch.zeros((self.num_envs, 1), device=self.device)
+        # dones = torch.full((self.num_envs, 1), False, device=self.device)
+        # null_rews = torch.zeros_like(rewards, device=self.device)
         frame_list = []
         # Update planning graph (assuming env is dynamic)
         self._build_obs_graph(node_dim=self.node_dim) # TODO for more dynamic envs, update this more frequently (in below loop)
@@ -194,7 +197,14 @@ class VMASPlanningEnv(EnvBase):
             # print("U-ACTION:", u_action)
             self.sim_obs, rews, dones, info = self.sim_env.step(u_action)
             # print("Rewards:", rewards, "stacked rews:", rews, "sum:", rews.sum(dim=0))
-            rewards += torch.stack(rews).sum(dim=0)
+
+            # NOTE Ignores additional rewards from envs that reset during rollout (from completing early)
+                # Hypothesis here is that envs reset at done indices and continue to accumulate negative rewards
+                # Ideally, we won't even step completed envs, but this is a quick fix for now
+            # done = done.unsqueeze(1)
+            # dones = torch.where(done == True, done, dones)
+            team_rews = torch.stack(rews).sum(dim=0)
+            rewards += team_rews #torch.where(dones == False, team_rews, null_rews)
 
             if self.render:
                 frame = self.sim_env.render(

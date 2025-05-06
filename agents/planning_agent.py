@@ -243,7 +243,7 @@ class PlanningAgent(Agent):
                 #     self.trajs = self._compute_trajectory(start_node_idxs, graphs_list, heuristic_weights, horizon)
                 #     self.traj_idx[i] = 0
 
-                if start_node_idxs[i] == traj[self.traj_idx[i]] and norm_dists[i][start_node_idxs[i]] < 0.05: #traj[1]
+                if start_node_idxs[i] == traj[self.traj_idx[i]] and norm_dists[i][start_node_idxs[i]] < 0.1: #traj[1]
                     # print(f"NODE {start_node_idxs[i]} REACHED")
                     # self.trajs[i] = traj[1:]
                     self.traj_idx[i] = min(self.traj_idx[i] + 1, len(traj)-1)
