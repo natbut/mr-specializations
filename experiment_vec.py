@@ -197,7 +197,7 @@ def train_PPO(scenario,
             policy_module,
             frames_per_batch=frames_per_batch,
             total_frames=total_frames,
-            split_trajs=False,
+            split_trajs=True,
             device=device,
         )
 
@@ -217,9 +217,9 @@ def train_PPO(scenario,
             entropy_bonus=bool(entropy_eps),
             entropy_coef=entropy_eps,
             # these keys match by default but we set this for completeness
-            critic_coef=1.0, #0.01,
+            # critic_coef=1.0, #0.01,
             loss_critic_type="smooth_l1",
-            clip_value=False,
+            # clip_value=False,
         )
 
         optim = torch.optim.Adam(loss_module.parameters(), lr)

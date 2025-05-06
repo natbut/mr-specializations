@@ -4,16 +4,44 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tensordict.nn.distributions import NormalParamExtractor
+  
+# class PositionalEncoding(nn.Module):
+#     def __init__(self, d_model):
+#         super().__init__()
+#         self.linear = nn.Linear(2, d_model)
 
+#     def forward(self, xy):
+#         return self.linear(xy)  # learnable x,y embedding
+    
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model):
         super().__init__()
         self.linear = nn.Linear(2, d_model)
 
     def forward(self, xy):
-        return self.linear(xy)  # learnable x,y embedding
+        """
+        xy: Tensor of shape [B, N, 2]
+        Normalizes x and y per batch to [-1, 1]
+        """
+        x = xy[:, :, 0:1]  # [B, N, 1]
+        y = xy[:, :, 1:2]  # [B, N, 1]
 
-class EnvironmentTransformer(nn.Module):
+        x_min = x.min(dim=1, keepdim=True).values  # [B, 1, 1]
+        x_max = x.max(dim=1, keepdim=True).values
+        y_min = y.min(dim=1, keepdim=True).values
+        y_max = y.max(dim=1, keepdim=True).values
+
+        x_range = (x_max - x_min).clamp(min=1e-6)   # [B, 1, 1]
+        y_range = (y_max - y_min).clamp(min=1e-6)
+
+        x_norm = (x - x_min) / x_range * 2 - 1      # [B, N, 1]
+        y_norm = (y - y_min) / y_range * 2 - 1      # [B, N, 1]
+
+        xy_norm = torch.cat([x_norm, y_norm], dim=-1)  # [B, N, 2]
+        return self.linear(xy_norm)                    # [B, N, d_model]
+
+class EnvironmentTransformerOLD(nn.Module):
+    
     def __init__(self, num_features, num_heuristics, d_model=128, d_feedforward=2048, num_heads=4, num_layers=2):
         super().__init__()
         self.d_model = d_model
@@ -33,10 +61,13 @@ class EnvironmentTransformer(nn.Module):
 
         self.output_head = nn.Sequential(
             nn.Linear(d_model, 2*num_heuristics),
-            nn.Softmax(dim=-1)  # softmax over heuristics
+            # nn.Softmax(dim=-1)  # softmax over decoder outputs
+            nn.Tanh() # hold outputs in [-1, 1] range
         )
 
         self.norm_extractor = NormalParamExtractor()
+
+        self.calls = 0
 
     def forward(self, cell_features, cell_positions, robot_positions):
         """
@@ -104,12 +135,129 @@ class EnvironmentTransformer(nn.Module):
         # print("Extracted params:\n", h_weights_loc, h_weights_scale)
         # h_weights_loc, h_weights_scale = self.norm_extractor(vals).chunk(2, dim=-1)
 
+        self.calls += 1
+        if self.calls % 1000 == 0:
+            print(f"Sample positional enc at call {self.calls}:\n", x_pos)
+            print(f"Sample encoder out at call {self.calls}:\n", enc_out)
+            print(f"Sample decoder out at call {self.calls}:\n", vals)
+            print(f"Sample h_weights loc at call {self.calls}:\n", h_weights_loc)
+            print(f"Sample h_weights scale at call {self.calls}:\n", h_weights_scale)
+
         if unbatched:
             return h_weights_loc[0], h_weights_scale[0] # removes batch dim from actions
         else:
             return h_weights_loc, h_weights_scale 
 
 
+class EnvironmentTransformer(nn.Module):
+    def __init__(
+        self,
+        num_features,
+        num_heuristics,
+        max_robots=4,
+        d_model=128,
+        d_feedforward=2048,
+        num_heads=4,
+        num_layers=2,
+        dropout_rate=0.2,
+        noise_std=0.1
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.num_heuristics = num_heuristics
+        self.max_robots = max_robots
+        self.noise_std = noise_std
+
+        # Embeddings
+        self.feature_embed = nn.Linear(num_features, d_model)
+        self.pos_embed = PositionalEncoding(d_model)
+        self.agent_embed = nn.Embedding(max_robots, d_model)
+
+        # Transformer encoder
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=num_heads,
+            dim_feedforward=d_feedforward,
+            dropout=dropout_rate,
+            batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        # Transformer decoder (self + cross-attention)
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model,
+            nhead=num_heads,
+            dim_feedforward=d_feedforward,
+            dropout=dropout_rate,
+            batch_first=True
+        )
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+
+        # Output head: raw logits for Categorical
+        self.output_head = nn.Linear(d_model, 2 * num_heuristics)
+        self.norm_extractor = NormalParamExtractor()
+        self.calls = 0
+
+    def forward(self, cell_features, cell_positions, robot_positions):
+        unbatched = False
+        if cell_features.dim() == 2:
+            unbatched = True
+            cell_features = cell_features.unsqueeze(0)
+            cell_positions = cell_positions.unsqueeze(0)
+            robot_positions = robot_positions.unsqueeze(0)
+
+        B, N, _ = cell_features.shape
+        R = robot_positions.size(1)
+
+        # === Encoder input ===
+        x_feat = self.feature_embed(cell_features)
+        x_pos = self.pos_embed(cell_positions)
+        x = x_feat + x_pos
+        enc_out = self.encoder(x)
+
+        # === Gather robot tokens ===
+        with torch.no_grad():
+            cell_pos_exp = cell_positions.unsqueeze(1)
+            robot_pos_exp = robot_positions.unsqueeze(2)
+            dists = torch.norm(robot_pos_exp - cell_pos_exp, dim=-1)
+            closest_idxs = torch.argmin(dists, dim=-1)
+
+        robot_tokens = torch.gather(
+            enc_out,
+            1,
+            closest_idxs.unsqueeze(-1).expand(-1, -1, self.d_model)
+        )  # [B, R, D]
+
+        # === Inject noise ===
+        if self.training and self.noise_std > 0:
+            robot_tokens = robot_tokens + torch.randn_like(robot_tokens) * self.noise_std
+
+        # === Add positional & agent-ID embeddings ===
+        # robot_positions: [B, R, 2]
+        robot_pos_enc = self.pos_embed(robot_positions)
+        id_indices = torch.arange(R, device=robot_tokens.device)[None, :]
+        agent_id_enc = self.agent_embed(id_indices).expand(B, -1, -1)
+        robot_tokens = robot_tokens + robot_pos_enc + agent_id_enc
+
+        # === Decoder ===
+        decoder_out = self.decoder(tgt=robot_tokens, memory=enc_out)
+
+        # === Heuristic outputs ===
+        vals = self.output_head(decoder_out)
+        h_loc, h_scale = self.norm_extractor(vals)
+
+        self.calls += 1
+        if self.calls % 1000 == 0:
+            print(f"Sample positional enc at call {self.calls}:\n", x_pos)
+            print(f"Sample encoder out at call {self.calls}:\n", enc_out)
+            print(f"Sample decoder out at call {self.calls}:\n", vals)
+            print(f"Sample h_weights loc at call {self.calls}:\n", h_loc)
+            print(f"Sample h_weights scale at call {self.calls}:\n", h_scale)
+
+        if unbatched:
+            return h_loc[0], h_scale[0]
+        return h_loc, h_scale
+    
 
 class EnvironmentCriticTransformer(nn.Module):
     def __init__(self, num_features, d_model=128, num_heads=4, num_layers=2, use_attention_pool=True):

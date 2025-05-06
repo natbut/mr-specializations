@@ -101,7 +101,7 @@ class Scenario(BaseScenario):
         )
 
         self.agent_radius = kwargs.pop(
-            "agent_radius", 0.1
+            "agent_radius", 0.05
             )
         
         self.min_distance_between_entities = (
@@ -153,12 +153,12 @@ class Scenario(BaseScenario):
 
         self.agents = []
         for i in range(self.n_agents):
-            color = self.agent_color
-            # color = (
-            #     known_colors[i]
-            #     if i < len(known_colors)
-            #     else colors[i - len(known_colors)]
-            # )  # Get color for agent
+            # color = self.agent_color
+            color = (
+                known_colors[i]
+                if i < len(known_colors)
+                else colors[i - len(known_colors)]
+            )  # Get color for agent
 
             sensors = [
                 Lidar(
@@ -443,7 +443,9 @@ class Scenario(BaseScenario):
 
     def done(self) -> Tensor:
         # print("Completed tasks:", self.completed_tasks)
-        return self.completed_tasks.all(dim=-1) #self.all_goal_reached
+        # return self.completed_tasks.all(dim=-1) #self.all_goal_reached
+        return torch.full(
+            (self.world.batch_dim,), False, device=self.world.device)
 
     def info(self, agent: Agent) -> Dict[str, Tensor]:
         return {
