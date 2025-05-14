@@ -187,6 +187,7 @@ class VMASPlanningEnv(EnvBase):
         self._build_obs_graph(node_dim=self.node_dim) # TODO for more dynamic envs, update this more frequently (in below loop)
         for agent in self.sim_env.agents: # Reset agent trajectories
             agent.trajs = []
+        # print("\n= Pre-rollout step! =")
         for t in range(self.horizon):
             verbose = False
             # if t == 0: verbose = True
@@ -223,6 +224,7 @@ class VMASPlanningEnv(EnvBase):
             clip.write_gif(f"{self.render_fp}_{self.count}.gif", fps=fps)
             self.count += 1
 
+
         # print("Rewards:", rewards, "\nDones:", dones.unsqueeze(1))
         # rewards = rewards / (self.horizon*(self.sim_env.n_agents*0.9)) # NOTE ADDED NORMALIZATION FACTOR TO MAX PER-STEP REWARD
 
@@ -246,6 +248,9 @@ class VMASPlanningEnv(EnvBase):
         # Should return next_state, rewards, done as tensordict
         next_state.update(rew_tdict).update(done_tdict) 
         # print("Next TDict:\n", next_state)
+        
+        # print("= Post-rollout step! = ")
+
         return next_state #, rewards, done, {}
 
     
