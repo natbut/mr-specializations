@@ -142,7 +142,7 @@ class PlanningAgent(Agent):
                 # Get node with lowest f_score, remove from queue
                 if verbose: print("Open set:", open_set)
                 _, current = min(open_set, key=lambda x: h_score[x[1]])
-                open_set = [node for node in open_set if node[1] != current]
+                # open_set = [node for node in open_set if node[1] != current]
                 if verbose: print("Expanding", current)
 
                 if h_score[current] < min_h: # NOTE we are appending lowest-cost nodes to path
@@ -157,7 +157,7 @@ class PlanningAgent(Agent):
 
                 neighbors = graph.edge_index[1][graph.edge_index[0] == current]
                 # print(f"Neighbors of {current}: {neighbors}. \n Edge Index: \n{graph.edge_index}")
-
+                open_set = [(f_score[current], current)]
                 for neighbor in neighbors:
                     neighbor = neighbor.item()
                     # TODO update to use edge_attr to add to g_score

@@ -197,17 +197,20 @@ def train_PPO(scenario,
             policy_module,
             frames_per_batch=frames_per_batch,
             total_frames=total_frames,
-            split_trajs=True,
+            # split_trajs=True,
             device=device,
         )
 
         replay_buffer = ReplayBuffer(
             storage=LazyTensorStorage(max_size=frames_per_batch),
-            sampler=SamplerWithoutReplacement(),
+            sampler=SamplerWithoutReplacement(shuffle=False),
         )
 
         advantage_module = GAE(
-            gamma=gamma, lmbda=lmbda, value_network=value_module, average_gae=True,
+            gamma=gamma,
+            lmbda=lmbda,
+            value_network=value_module,
+            # average_gae=True,
         )
 
         loss_module = ClipPPOLoss(
@@ -219,6 +222,7 @@ def train_PPO(scenario,
             # these keys match by default but we set this for completeness
             # critic_coef=1.0, #0.01,
             loss_critic_type="smooth_l1",
+            # normalize_advantage=True,
             # clip_value=False,
         )
 
@@ -326,6 +330,7 @@ def train_PPO(scenario,
                 with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
                     # execute a rollout with the trained policy
                     eval_rollout = env.rollout(3, policy_module)
+                    env.reset()
                     logs["eval reward"].append(eval_rollout["next", "reward"].mean().item())
                     logs["eval reward (sum)"].append(
                         eval_rollout["next", "reward"].sum().item()
