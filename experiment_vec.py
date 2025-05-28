@@ -57,7 +57,8 @@ def train_PPO(scenario,
               env_configs,
               rl_configs,
               model_configs,
-              use_wandb=False
+              use_wandb=False,
+              project_name=None
               ):
     
     ### HYPERPARAMS ###
@@ -84,7 +85,7 @@ def train_PPO(scenario,
         if use_wandb:
             run = wandb.init(
                 entity="nlbutler18-oregon-state-university",
-                project="mothership",
+                project=project_name,
                 name=test_name,
             )
 
@@ -160,8 +161,7 @@ def train_PPO(scenario,
         
         tf_crit = EnvironmentCriticTransformer(num_features=num_features,
                                                 d_model=d_model,
-                                                
-                                                use_attention_pool=True,
+                                                use_attention_pool=False,
                                                 ).to(device)
 
         policy_module = TensorDictModule(

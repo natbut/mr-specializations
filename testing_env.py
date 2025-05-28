@@ -2,7 +2,8 @@
 import torch
 from torchrl.data import CompositeSpec, BoundedTensorSpec, Unbounded
 
-from envs.scenarios.SR_tasks import Scenario
+# from envs.scenarios.SR_tasks import Scenario
+from envs.scenarios.explore_comms_tasks import Scenario
 from envs.planning_env_vec import VMASPlanningEnv
 from tensordict.tensordict import TensorDict
 from torchrl.envs import (
@@ -18,7 +19,7 @@ from experiment_vec import load_yaml_to_kwargs
 if __name__ == "__main__":
     
     scenario_configs = [
-        "conf/scenarios/SR_tasks.yaml",
+        "conf/scenarios/exploring_0.yaml",
     ]
     env_configs = [
         "conf/envs/planning_env_vec_2.yaml",
@@ -32,7 +33,7 @@ if __name__ == "__main__":
 
     env.render = True
 
-    act = [torch.stack([torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0], device="cuda")]) for _ in range(8)]
+    act = [torch.stack([torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0,], device="cuda")]) for _ in range(8)]
 
     actions = torch.stack(act)
     # actions = torch.stack([actions for _ in range(2)])\

@@ -369,7 +369,7 @@ class Scenario(BaseScenario):
                         x_bounds=(-self.world.x_semidim, self.world.x_semidim),
                         y_bounds=(-self.world.y_semidim, self.world.y_semidim),
                     )
-
+                    print("POS:", pos)
                     task.state.pos[self.completed_tasks[:, i]] = pos[
                         self.completed_tasks[:, i]
                     ].squeeze(1)
