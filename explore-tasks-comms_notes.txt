@@ -1,0 +1,17 @@
+
+Notes for Exploration + Tasks + Comms Environment & Training Implementation:
+
+Environment(VMAS)
+- Agents: Non-holonomic (diff drive?) controls
+- Tasks: Randomly add tasks to EXPLORED regions of environment (anywhere within explored cells) - this will take the most development.
+- Observations (Global): Same approach - give global observation to first agent to return to planning env
+    - Put env graph structure in VMAS scenario class. Don't rebuild from new observations, instead just add nodes to graph as regions are discovered.
+    - Will need function(s) to aggregate environment features to cell feature vectors.
+- Observations (Local): We do need to track local observations for agents to plan over (specific task locations, exploration frontiers, and comms points). These should be computed at each sub-step, but probably only need to be computed for first agent (as they will likely just be global coordinates).
+- Vis (bonus): Visualize cell borders in env render
+
+Training Things
+- Scalability/Generalizability
+    - Randomize num. of active agents (Env will mandate that all agents are at least initialized)
+    - Randomize task appearance rate & distribution characteristics.
+    - Maintain homogeneous robot assumption (don't randomize speeds)
