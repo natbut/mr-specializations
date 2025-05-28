@@ -27,7 +27,7 @@ with cProfile.Profile() as pr:
 
         # Model Params
         model_configs = [
-            "conf/models/mat_5.yaml",
+            "conf/models/mat_7.yaml",
         ]
 
         
@@ -36,7 +36,8 @@ with cProfile.Profile() as pr:
                 env_configs,
                 rl_configs,
                 model_configs,
-                use_wandb=True
+                use_wandb=False,
+                project_name="mothership-complex"
                 )
         
     stats = pstats.Stats(pr)

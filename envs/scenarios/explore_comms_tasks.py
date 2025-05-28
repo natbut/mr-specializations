@@ -1,6 +1,4 @@
-#  Copyright (c) 2025.
-#  ProrokLab (https://www.proroklab.org/)
-#  All rights reserved.
+#  Nathan Butler
 
 import typing
 from typing import Dict, List
@@ -14,7 +12,6 @@ from vmas.simulator.dynamics.diff_drive import DiffDrive
 from vmas.simulator.dynamics.holonomic import Holonomic
 from vmas.simulator.dynamics.kinematic_bicycle import KinematicBicycle
 from vmas.simulator.scenario import BaseScenario
-from vmas.simulator.sensors import Lidar
 
 try:
     from agents.planning_agent import PlanningAgent
@@ -39,20 +36,20 @@ class Scenario(BaseScenario):
         ################
         self.plot_grid = False  # You can use this to plot a grid under the rendering for visualization purposes
 
-        self.n_agents_holonomic = kwargs.pop(
-            "n_agents_holonomic", 0
+        self.max_n_agents_holonomic = kwargs.pop(
+            "max_n_agents_holonomic", 0
         )  # Number of agents with holonomic dynamics
-        self.n_agents_diff_drive = kwargs.pop(
-            "n_agents_diff_drive", 2
+        self.max_n_agents_diff_drive = kwargs.pop(
+            "max_n_agents_diff_drive", 3
         )  # Number of agents with differential drive dynamics
-        self.n_agents_car = kwargs.pop(
-            "n_agents_car", 0
+        self.max_n_agents_car = kwargs.pop(
+            "max_n_agents_car", 0
         )  # Number of agents with car dynamics
-        self.n_agents = (
-            self.n_agents_holonomic + self.n_agents_diff_drive + self.n_agents_car
+        self.max_n_agents = (
+            self.max_n_agents_holonomic + self.max_n_agents_diff_drive + self.max_n_agents_car
         )
-        self.n_tasks = kwargs.pop("n_tasks", 2) # EQUAL TO MAX TASKS
-        self.n_obstacles = kwargs.pop("n_obstacles", 2)
+        self.max_n_tasks = kwargs.pop("max_n_tasks", 10) # EQUAL TO MAX TASKS
+        self.max_n_obstacles = kwargs.pop("max_n_obstacles", 7)
 
         self.world_spawning_x = kwargs.pop(
             "world_spawning_x", 1
@@ -68,10 +65,6 @@ class Scenario(BaseScenario):
         self.comms_rendering_range = kwargs.pop(
             "comms_rendering_range", 0
         )  # Used for rendering communication lines between agents (just visual)
-        self.lidar_range = kwargs.pop("lidar_range", 0.3)  # Range of the LIDAR sensor
-        self.n_lidar_rays = kwargs.pop(
-            "n_lidar_rays", 12
-        )  # Number of LIDAR rays around the agent, each ray gives an observation between 0 and lidar_range
 
         self._agents_per_task = kwargs.pop(
             "agents_per_task", 1
@@ -82,10 +75,10 @@ class Scenario(BaseScenario):
         )  # Whether the agents get a global or local reward for going to their goals
         
         self.task_comp_range = kwargs.pop(
-            "task_comp_range", 0.4
+            "task_comp_range", 0.1
         )
-        self.tasks_respawn = kwargs.pop(
-            "tasks_respawn", True
+        self.tasks_respawn_rate = kwargs.pop(
+            "tasks_respawn_rate", 0.001
         )
         self.complete_task_coeff = kwargs.pop(
             "task_reward", 0.1
@@ -97,6 +90,12 @@ class Scenario(BaseScenario):
         self.agent_radius = kwargs.pop(
             "agent_radius", 0.05
             )
+        
+        self.discrete_resolution = kwargs.pop(
+            "discrete_resolution", 0.4)
+        
+        self.num_feats = kwargs.pop(
+            "num_feats", 6)
         
         self.min_distance_between_entities = (
             self.task_comp_range #self.agent_radius * 4 + 0.05
@@ -114,7 +113,7 @@ class Scenario(BaseScenario):
         world = World(
             batch_dim,  # Number of environments simulated
             device,  # Device for simulation
-            substeps=5,  # Number of physical substeps (more yields more accurate but more expensive physics)
+            substeps=1,  # Number of physical substeps (more yields more accurate but more expensive physics)
             collision_force=500,  # Paramneter to tune for collisions
             dt=0.1,  # Simulation timestep
             gravity=(0.0, 0.0),  # Customizable gravity
@@ -137,16 +136,13 @@ class Scenario(BaseScenario):
             Color.PURPLE,
             Color.YELLOW,
             Color.RED,
-        ]  # Colors for the first 7 agents
+        ]  # Colors for first 7
         colors = torch.randn(
-            (max(self.n_agents - len(known_colors), 0), 3), device=device
-        )  # Other colors if we have more agents are random
-
-        self.agent_color = Color.BLUE
-        self.task_color = Color.ORANGE
+            (max(self.max_n_agents, self.max_n_tasks), 3), device=device
+        )  # Other colors if we have more elements are random
 
         self.agents = []
-        for i in range(self.n_agents):
+        for i in range(self.max_n_agents):
             # color = self.agent_color
             color = (
                 known_colors[i]
@@ -154,40 +150,25 @@ class Scenario(BaseScenario):
                 else colors[i - len(known_colors)]
             )  # Get color for agent
 
-            sensors = [
-                Lidar(
-                    world,
-                    n_rays=self.n_lidar_rays,
-                    max_range=self.lidar_range,
-                    entity_filter=lambda e: isinstance(
-                        e, Agent
-                    ),  # This makes sure that this lidar only percieves other agents
-                    angle_start=0.0,  # LIDAR angular ranges (we sense 360 degrees)
-                    angle_end=2
-                    * torch.pi,  # LIDAR angular ranges (we sense 360 degrees)
-                )
-            ]  # Agent LIDAR sensor
 
-            if i < self.n_agents_holonomic:
+            if i < self.max_n_agents_holonomic:
                 agent = PlanningAgent(
                     name=f"holonomic_{i}",
                     collide=True,
                     color=color,
                     render_action=True,
-                    sensors=sensors,
                     shape=Sphere(radius=self.agent_radius),
                     u_range=[1, 1],  # Ranges for actions
                     u_multiplier=[3, 3],  # Action multipliers
                     dynamics=Holonomic(),  # If you go to its class you can see it has 2 actions: force_x, and force_y
                 )
                 
-            elif i < self.n_agents_holonomic + self.n_agents_diff_drive:
+            elif i < self.max_n_agents_holonomic + self.max_n_agents_diff_drive:
                 agent = PlanningAgent(
-                    name=f"diff_drive_{i - self.n_agents_holonomic}",
+                    name=f"diff_drive_{i - self.max_n_agents_holonomic}",
                     collide=True,
                     color=color,
                     render_action=True,
-                    sensors=sensors,
                     shape=Sphere(radius=self.agent_radius),
                     u_range=[1, 1],  # Ranges for actions
                     u_multiplier=[0.5, 1],  # Action multipliers
@@ -199,11 +180,10 @@ class Scenario(BaseScenario):
                 max_steering_angle = torch.pi / 4
                 width = self.agent_radius
                 agent = PlanningAgent(
-                    name=f"car_{i-self.n_agents_holonomic-self.n_agents_diff_drive}",
+                    name=f"car_{i-self.max_n_agents_holonomic-self.max_n_agents_diff_drive}",
                     collide=True,
                     color=color,
                     render_action=True,
-                    sensors=sensors,
                     shape=Box(length=self.agent_radius * 2, width=width),
                     u_range=[1, max_steering_angle],
                     u_multiplier=[0.5, 1],
@@ -226,8 +206,13 @@ class Scenario(BaseScenario):
         # Add tasks
         ################
         self.tasks = []
-        for i in range(self.n_tasks):
-            color = known_colors[i] #self.task_color
+        for i in range(self.max_n_tasks):
+            # color = known_colors[i]
+            color = (
+                known_colors[i]
+                if i < len(known_colors)
+                else colors[i - len(known_colors)]
+            ) 
             task = Landmark(
                 name=f"goal_{i}",
                 collide=False,
@@ -243,7 +228,7 @@ class Scenario(BaseScenario):
         self.obstacles = (
             []
         )  # We will store obstacles here for easy access
-        for i in range(self.n_obstacles):
+        for i in range(self.max_n_obstacles):
             obstacle = Landmark(
                 name=f"obstacle_{i}",
                 collide=True,
@@ -257,30 +242,66 @@ class Scenario(BaseScenario):
         ################
         # Init Reward Tracking
         ################        
-        self.completed_tasks = torch.zeros((batch_dim, self.n_tasks), device=device)
+        self.completed_tasks = torch.zeros((batch_dim, self.max_n_tasks), device=device)
+        self.stored_tasks = torch.full(self.completed_tasks.shape, True, device=device)
         self.shared_tasks_rew = torch.zeros(batch_dim, device=device)
         
         
         ################
-        # Init High-Level Graph
+        # Init High-Level Graph Details
         ################
-        discrete_cell_features = torch.zeros(batch_dim, device=device)
-        discrete_cell_centers = torch.zeros(batch_dim, device=device)
+        cell_centers = []
+        for x_pos in torch.arange(-self.world_spawning_x+(self.discrete_resolution/2), self.world_spawning_x, self.discrete_resolution):
+            for y_pos in torch.arange(-self.world_spawning_y+(self.discrete_resolution/2), self.world_spawning_y, self.discrete_resolution):
+                cell_centers.append([x_pos, y_pos])
+        cell_centers = torch.tensor(cell_centers, device=device)
+        self.discrete_cell_centers = torch.stack([cell_centers for _ in range(batch_dim)])
+        self.discrete_cell_features = torch.zeros(self.discrete_cell_centers.shape[:-1] + (self.num_feats,), device=device)
+        self.discrete_cell_explored = torch.full(self.discrete_cell_centers.shape[:-1], False, device=device)
+
+        self.explored_cell_centers = torch.zeros(self.discrete_cell_centers.shape)
+
+
+        ## ELEMENT STORAGE ##
+        self.storage_pos = torch.cat([
+                        torch.full(
+                            (batch_dim, 1, 1),
+                            2, # MOVE OUT OF BOUNDS
+                            device=device,
+                            dtype=torch.float32,
+                        ),
+                        torch.full(
+                            (batch_dim, 1, 1),
+                            2, # MOVE OUT OF BOUNDS
+                            device=device,
+                            dtype=torch.float32,
+                        ),
+                    ],
+                    dim=2,
+                )
 
         return world
 
     def reset_world_at(self, env_index: int = None):
         ScenarioUtils.spawn_entities_randomly(
             self.world.agents
-            + self.obstacles
-            + self.tasks,  # List of entities to spawn
+            + self.obstacles,
+            # + self.tasks,  # List of entities to spawn
             self.world,
             env_index,  # Pass the env_index so we only reset what needs resetting
             self.min_distance_between_entities,
             x_bounds=(-self.world.x_semidim, self.world.x_semidim),
             y_bounds=(-self.world.y_semidim, self.world.y_semidim),
         )
-        
+
+        # RESET TASKS
+        for task in self.tasks:
+            task.state.pos[:] = self.storage_pos
+        self.stored_tasks.fill_(True)
+
+        # TODO: RESET EXPLORED REGIONS & REGION FEATURES
+        self.discrete_cell_explored.fill_(False)
+        self.discrete_cell_features.fill_(0)
 
     def reward(self, agent: Agent):
         is_first = agent == self.world.agents[0]
@@ -305,78 +326,72 @@ class Scenario(BaseScenario):
                 dim=1,
             )
             self.completed_tasks = self.agents_per_task >= self._agents_per_task
+            if self.completed_tasks.any():
+                self.stored_tasks = torch.where(self.completed_tasks, self.completed_tasks, self.stored_tasks)
 
             # Allocate completion credit to passengers
             self.shared_tasks_rew[:] = 0
             for a in self.world.agents:
                 self.shared_tasks_rew += self.agent_tasks_reward(a)
         
-        # Respawn tasks
+        # Process environment updates
         if is_last:
-            if self.tasks_respawn:
-                occupied_positions_agents = [self.agents_pos]
-                for i, task in enumerate(self.tasks):
-                    occupied_positions_tasks = [
-                                                    o.state.pos.unsqueeze(1)
-                                                    for o in self.tasks
-                                                    if o is not task
-                                                ]
-                    occupied_positions = torch.cat(
-                        occupied_positions_agents + occupied_positions_tasks,
-                        dim=1,
-                    )
+            # TOGGLE NEWLY-EXPLORED REGIONS
+            # print("Agents pos shape:", self.agents_pos.shape, " Cell centers shape:", self.discrete_cell_centers.shape)
+            agents_cell_dists = torch.min(torch.cdist(self.discrete_cell_centers, self.agents_pos), dim=-1).values # for each cell, dist to each agent
+            # print("\nAgents cell dists:", agents_cell_dists, " Shape:", agents_cell_dists.shape)
+            self.discrete_cell_explored = torch.where(
+                agents_cell_dists < self.discrete_resolution/2,
+                True,
+                self.discrete_cell_explored
+                )
+            B = self.world.batch_dim
+            explored_cell_ids = [torch.nonzero(self.discrete_cell_explored[b], as_tuple=False).squeeze(1) for b in range(B)]
+            self.explored_cell_centers = [self.discrete_cell_centers[b, ids] for b, ids in enumerate(explored_cell_ids)]
 
-                    # pos = ScenarioUtils.find_random_pos_for_entity(
-                    #     occupied_positions,
-                    #     env_index=None,
-                    #     world=self.world,
-                    #     min_dist_between_entities=self.min_distance_between_entities,
-                    #     x_bounds=(-self.world.x_semidim, self.world.x_semidim),
-                    #     y_bounds=(-self.world.y_semidim, self.world.y_semidim),
-                    # )
-                    
-                    x_bounds=(-self.world.x_semidim, self.world.x_semidim)
-                    y_bounds=(-self.world.y_semidim, self.world.y_semidim)
-                    
-                    proposed_pos = torch.cat([
-                            torch.full(
-                                (self.world.batch_dim, 1, 1),
-                                10, # MOVE COMPLETED TASKS OUT OF BOUNDS
-                                device=self.world.device,
-                                dtype=torch.float32,
-                            ),#.zero(*x_bounds),
-                            torch.full(
-                                (self.world.batch_dim, 1, 1),
-                                10, # MOVE COMPLETED TASKS OUT OF BOUNDS
-                                device=self.world.device,
-                                dtype=torch.float32,
-                            ),#.uniform_(*y_bounds),
-                        ],
-                        dim=2,
-                    )
-                    
-                    task.state.pos[self.completed_tasks[:, i]] = proposed_pos
-                    #pos[
-                        # self.completed_tasks[:, i]
-                    # ].squeeze(1)
-                    
-                    
-                    # SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY)
-                    pos = ScenarioUtils.find_random_pos_for_entity(
-                        occupied_positions,
-                        env_index=None,
-                        world=self.world,
-                        min_dist_between_entities=self.min_distance_between_entities,
-                        x_bounds=(-self.world.x_semidim, self.world.x_semidim),
-                        y_bounds=(-self.world.y_semidim, self.world.y_semidim),
-                    )
-                    # Randomly grab out-of-bounds tasks and insert to explored region
-                    task_on_deck = torch.where(task.state.pos > 9)
-                    print("Task on deck:", task_on_deck)
-        
+            occupied_positions_agents = [self.agents_pos]
+            for i, task in enumerate(self.tasks):
+                
+                # MOVE COMPLETED TASKS OUT OF BOUNDS (TO STORAGE)
+                occupied_positions_tasks = [
+                                            o.state.pos.unsqueeze(1)
+                                            for o in self.tasks
+                                            if o is not task
+                                            ]
+                occupied_positions = torch.cat(
+                    occupied_positions_agents + occupied_positions_tasks,
+                    dim=1,
+                )
+                task.state.pos[self.completed_tasks[:, i]] = self.storage_pos
 
+                
+                # SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY)
+                    # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
+                if self.stored_tasks[:,i].any() and np.random.random() < self.tasks_respawn_rate:
+                    spawn_pos = []
+                    for idx in range(self.world.batch_dim):
+                        rand_cell_idx = torch.randint(self.explored_cell_centers[idx].shape[0], (1,)).item()
+                        rand_cell_center = self.explored_cell_centers[idx][rand_cell_idx].tolist()
+                        # print("\nRand cell center:", rand_cell_center)
 
-        # TODO: TRY GIVING AGENTS MORE REWARD IF ALL TASKS ARE COVERED
+                        rand_pos = ScenarioUtils.find_random_pos_for_entity(
+                            occupied_positions,
+                            env_index=idx,
+                            world=self.world,
+                            min_dist_between_entities=self.min_distance_between_entities,
+                            x_bounds=(rand_cell_center[0]-self.discrete_resolution/2,
+                                    rand_cell_center[0]+self.discrete_resolution/2),
+                            y_bounds=(rand_cell_center[1]-self.discrete_resolution/2,
+                                    rand_cell_center[1]+self.discrete_resolution/2),
+                        )
+                        # print("Rand pos selected:", rand_pos)
+                        spawn_pos.append(rand_pos)
+                    spawn_pos = torch.stack(spawn_pos)
+                    # print("Spawn pos:", spawn_pos)
+                    task.state.pos[self.stored_tasks[:, i]] = spawn_pos
+                    self.stored_tasks[:, i] = False
+    
+
         tasks_reward = (
             self.shared_tasks_rew if self.shared_rew else agent.tasks_rew
         )  # Choose global or local reward based on configuration
@@ -402,6 +417,7 @@ class Scenario(BaseScenario):
         return agent.tasks_rew
 
     def observation(self, agent: Agent):
+        # TODO: Return BOTH global observation for learner and local agent observation for planner
         obs = {
             
             "obs_tasks": torch.stack(
@@ -462,13 +478,28 @@ class Scenario(BaseScenario):
             if not isinstance(agent.dynamics, Holonomic)
         ]  # Plot the rotation for non-holonomic agents
 
-        # Task ranges
+        # Plot explored regions
+        side_len = self.discrete_resolution/2
+        square = [[-side_len, -side_len],
+                  [-side_len, side_len],
+                  [side_len, side_len],
+                  [side_len, -side_len]]
+        for centers_list in self.explored_cell_centers:
+            for center in centers_list:
+                cell = rendering.make_polygon(square, filled=True)
+                xform = rendering.Transform()
+                xform.set_translation(*center)
+                cell.add_attr(xform)
+                cell.set_color(0.95,0.95,0.95)
+                geoms.append(cell)
+
+        # Plot Task ranges
         for target in self.tasks:
             range_circle = rendering.make_circle(self.task_comp_range, filled=False)
             xform = rendering.Transform()
             xform.set_translation(*target.state.pos[env_index])
             range_circle.add_attr(xform)
-            range_circle.set_color(*self.task_color.value)
+            range_circle.set_color(0,0,0)
             geoms.append(range_circle)
 
         # Plot communication lines
@@ -495,4 +526,4 @@ class Scenario(BaseScenario):
 
 if __name__ == "__main__":
     scenario = Scenario()
-    render_interactively(scenario, display_info=False)
+    render_interactively(scenario, display_info=True)
