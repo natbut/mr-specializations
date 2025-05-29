@@ -75,7 +75,7 @@ class Scenario(BaseScenario):
         )  # Whether the agents get a global or local reward for going to their goals
         
         self.task_comp_range = kwargs.pop(
-            "task_comp_range", 0.1
+            "task_comp_range", 0.03
         )
         self.tasks_respawn_rate = kwargs.pop(
             "tasks_respawn_rate", 0.001
@@ -88,14 +88,17 @@ class Scenario(BaseScenario):
         )
 
         self.agent_radius = kwargs.pop(
-            "agent_radius", 0.05
+            "agent_radius", 0.025
+            )
+        self.task_radius = kwargs.pop(
+            "task_radius", 0.025
             )
         
         self.discrete_resolution = kwargs.pop(
-            "discrete_resolution", 0.4)
+            "discrete_resolution", 0.2)
         
         self.num_feats = kwargs.pop(
-            "num_feats", 6)
+            "num_feats", 5) # TODO compute dynamically?
         
         self.min_distance_between_entities = (
             self.task_comp_range #self.agent_radius * 4 + 0.05
@@ -217,6 +220,7 @@ class Scenario(BaseScenario):
                 name=f"goal_{i}",
                 collide=False,
                 color=color,
+                shape=Sphere(radius=self.task_radius),
             )
             world.add_landmark(task)
             self.tasks.append(task)
@@ -263,26 +267,29 @@ class Scenario(BaseScenario):
 
 
         ## ELEMENT STORAGE ##
-        self.storage_pos = torch.cat([
-                        torch.full(
-                            (batch_dim, 1, 1),
-                            2, # MOVE OUT OF BOUNDS
-                            device=device,
-                            dtype=torch.float32,
-                        ),
-                        torch.full(
-                            (batch_dim, 1, 1),
-                            2, # MOVE OUT OF BOUNDS
-                            device=device,
-                            dtype=torch.float32,
-                        ),
-                    ],
-                    dim=2,
-                )
+        self.storage_pos = torch.full((batch_dim, 2), 2, device=device, dtype=torch.float32)
+        
+        # torch.cat([
+        #                 torch.full(
+        #                     (batch_dim, 1, 1),
+        #                     2, # MOVE OUT OF BOUNDS
+        #                     device=device,
+        #                     dtype=torch.float32,
+        #                 ),
+        #                 torch.full(
+        #                     (batch_dim, 1, 1),
+        #                     2, # MOVE OUT OF BOUNDS
+        #                     device=device,
+        #                     dtype=torch.float32,
+        #                 ),
+        #             ],
+        #             dim=2,
+        #         )
 
         return world
 
     def reset_world_at(self, env_index: int = None):
+        print("SCENARIO RESETTING")
         ScenarioUtils.spawn_entities_randomly(
             self.world.agents
             + self.obstacles,
@@ -296,12 +303,15 @@ class Scenario(BaseScenario):
 
         # RESET TASKS
         for task in self.tasks:
+            # print("TASK POS SHAPE", task.state.pos[:].shape)
+            # print("STORAGE SHAPE:", self.storage_pos.shape)
             task.state.pos[:] = self.storage_pos
         self.stored_tasks.fill_(True)
 
         # TODO: RESET EXPLORED REGIONS & REGION FEATURES
         self.discrete_cell_explored.fill_(False)
         self.discrete_cell_features.fill_(0)
+        self.explored_cell_centers.fill_(0)
 
     def reward(self, agent: Agent):
         is_first = agent == self.world.agents[0]
@@ -345,9 +355,11 @@ class Scenario(BaseScenario):
                 True,
                 self.discrete_cell_explored
                 )
+            # print("EXPLORE STATUS:", self.discrete_cell_explored)
             B = self.world.batch_dim
             explored_cell_ids = [torch.nonzero(self.discrete_cell_explored[b], as_tuple=False).squeeze(1) for b in range(B)]
             self.explored_cell_centers = [self.discrete_cell_centers[b, ids] for b, ids in enumerate(explored_cell_ids)]
+            # print("EXPLORE CELL CENTERS:", self.explored_cell_centers)
 
             occupied_positions_agents = [self.agents_pos]
             for i, task in enumerate(self.tasks):
@@ -362,20 +374,29 @@ class Scenario(BaseScenario):
                     occupied_positions_agents + occupied_positions_tasks,
                     dim=1,
                 )
-                task.state.pos[self.completed_tasks[:, i]] = self.storage_pos
+
+                if self.completed_tasks[:, i].any():
+                    # print("COMPLETED TASKS\nTask state pos:", task.state.pos)
+                    # print("Completed tasks:", self.completed_tasks)
+                    # print("Completed tasks[:,i]:", self.completed_tasks[:, i])
+                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[i]
 
                 
                 # SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY)
                     # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
-                if self.stored_tasks[:,i].any() and np.random.random() < self.tasks_respawn_rate:
-                    spawn_pos = []
-                    for idx in range(self.world.batch_dim):
+                
+                for idx in range(self.world.batch_dim):
+                    spawn_prob = self.tasks_respawn_rate * len(self.explored_cell_centers[idx])
+                    # print("Spawn prob:", spawn_prob)
+                    if self.stored_tasks[idx,i].any() and np.random.random() < spawn_prob:
+                        # print("Spawning task", i, " in world", idx)
+                        spawn_pos = []
                         rand_cell_idx = torch.randint(self.explored_cell_centers[idx].shape[0], (1,)).item()
                         rand_cell_center = self.explored_cell_centers[idx][rand_cell_idx].tolist()
                         # print("\nRand cell center:", rand_cell_center)
 
                         rand_pos = ScenarioUtils.find_random_pos_for_entity(
-                            occupied_positions,
+                            occupied_positions[idx],
                             env_index=idx,
                             world=self.world,
                             min_dist_between_entities=self.min_distance_between_entities,
@@ -386,10 +407,13 @@ class Scenario(BaseScenario):
                         )
                         # print("Rand pos selected:", rand_pos)
                         spawn_pos.append(rand_pos)
-                    spawn_pos = torch.stack(spawn_pos)
-                    # print("Spawn pos:", spawn_pos)
-                    task.state.pos[self.stored_tasks[:, i]] = spawn_pos
-                    self.stored_tasks[:, i] = False
+
+                        spawn_pos = torch.stack(spawn_pos)
+                        # print("Initial task state pos:", task.state.pos)
+                        # print("Spawn pos:", spawn_pos)
+                        task.state.pos[idx] = spawn_pos
+                        self.stored_tasks[idx, i] = False
+                        # print("Updated task state pos:", task.state.pos)
     
 
         tasks_reward = (
@@ -484,14 +508,14 @@ class Scenario(BaseScenario):
                   [-side_len, side_len],
                   [side_len, side_len],
                   [side_len, -side_len]]
-        for centers_list in self.explored_cell_centers:
-            for center in centers_list:
-                cell = rendering.make_polygon(square, filled=True)
-                xform = rendering.Transform()
-                xform.set_translation(*center)
-                cell.add_attr(xform)
-                cell.set_color(0.95,0.95,0.95)
-                geoms.append(cell)
+        
+        for center in self.explored_cell_centers[env_index]:
+            cell = rendering.make_polygon(square, filled=True)
+            xform = rendering.Transform()
+            xform.set_translation(*center)
+            cell.add_attr(xform)
+            cell.set_color(0.95,0.95,0.95)
+            geoms.append(cell)
 
         # Plot Task ranges
         for target in self.tasks:
