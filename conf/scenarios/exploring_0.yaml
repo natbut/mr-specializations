@@ -1,10 +1,10 @@
 
-max_n_agents_holonomic: 0
-max_n_agents_diff_drive: 1
+max_n_agents_holonomic: 2
+max_n_agents_diff_drive: 0
 max_n_agents_car: 0
 
-max_n_tasks: 2
-max_n_obstacles: 2
+max_n_tasks: 8
+max_n_obstacles: 6
 
 agent_radius: 0.05
 
@@ -13,9 +13,10 @@ world_spawning_y: 1
 
 comms_rendering_range: 0
 
+tasks_respawn_rate: 0.001
 task_comp_range: 0.1
 
-task_reward: 0.02
+task_reward: 0.5
 time_penalty: -0.01
 shared_rew: False
 

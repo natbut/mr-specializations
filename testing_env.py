@@ -1,19 +1,11 @@
 
 import torch
-from torchrl.data import CompositeSpec, BoundedTensorSpec, Unbounded
 
 # from envs.scenarios.SR_tasks import Scenario
 from envs.scenarios.explore_comms_tasks import Scenario
 from envs.planning_env_vec import VMASPlanningEnv
 from tensordict.tensordict import TensorDict
-from torchrl.envs import (
-    Compose,
-    DoubleToFloat,
-    ObservationNorm,
-    StepCounter,
-    TransformedEnv,
-    EnvBase
-)
+
 from experiment_vec import load_yaml_to_kwargs
 
 if __name__ == "__main__":
@@ -33,10 +25,10 @@ if __name__ == "__main__":
 
     env.render = True
 
-    act = [torch.stack([torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0,], device="cuda")]) for _ in range(8)]
-
-    actions = torch.stack(act)
-    # actions = torch.stack([actions for _ in range(2)])\
+    # act = [torch.stack([torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], device="cuda")]) for _ in range(8)]
+    actions = torch.tensor([1.0, 0.0, 0.0], device="cuda")
+    actions = torch.stack([actions for _ in range(2)]) # stack for robots
+    actions = torch.stack([actions for _ in range(8)]) # stack for envs
     
     print("Actions:", actions)
     
@@ -49,7 +41,7 @@ if __name__ == "__main__":
     # print("\nReset Obs Graph:\n", obs_graph["graph"], "Num graphs:", obs_graph["graph"].num_graphs) #, "\n Graph 0:\n", obs_graph[0])
     # print("\nGraphs to Data list:\n", obs_graph["graph"].to_data_list())
 
-    for _ in range(4):
+    for _ in range(3):
         next_tdict= env.step(actions_tdict)
 
     print("ENV STEP RETURN:", next_tdict)

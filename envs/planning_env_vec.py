@@ -42,7 +42,7 @@ class VMASPlanningEnv(EnvBase):
                                 **scenario_kwargs,
                                 )
 
-            n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
+            n_features = self.scenario.num_feats #self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
             
             # Define Observation & Action Specs
             self.observation_spec = Composite(
@@ -101,7 +101,7 @@ class VMASPlanningEnv(EnvBase):
                                 **scenario_kwargs,
                                 )
         
-            n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
+            n_features = self.scenario.num_feats #self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
 
             # Define Observation & Action Specs
             self.observation_spec = Composite(
