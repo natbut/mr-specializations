@@ -100,15 +100,13 @@ class Scenario(BaseScenario):
         self.num_feats = kwargs.pop(
             "num_feats", 5) # TODO compute dynamically?
         
-        self.min_distance_between_entities = (
-            self.task_comp_range #self.agent_radius * 4 + 0.05
-        )  # Minimum distance between entities at spawning time
+        self.min_distance_between_entities = kwargs.pop(
+            "min_distance_between_entities", 0.05) # Minimum distance between entities at spawning time
         self.min_collision_distance = (
             0.005  # Minimum distance between entities for collision trigger
         )
 
         ScenarioUtils.check_kwargs_consumed(kwargs) # Warn is not all kwargs have been consumed
-
 
         ################
         # Make world
@@ -160,6 +158,7 @@ class Scenario(BaseScenario):
                     collide=True,
                     color=color,
                     render_action=True,
+                    max_speed=0.5,
                     shape=Sphere(radius=self.agent_radius),
                     u_range=[1, 1],  # Ranges for actions
                     u_multiplier=[3, 3],  # Action multipliers
@@ -172,6 +171,7 @@ class Scenario(BaseScenario):
                     collide=True,
                     color=color,
                     render_action=True,
+                    max_speed=0.5,
                     shape=Sphere(radius=self.agent_radius),
                     u_range=[1, 1],  # Ranges for actions
                     u_multiplier=[0.5, 1],  # Action multipliers
@@ -187,6 +187,7 @@ class Scenario(BaseScenario):
                     collide=True,
                     color=color,
                     render_action=True,
+                    max_speed=0.5,
                     shape=Box(length=self.agent_radius * 2, width=width),
                     u_range=[1, max_steering_angle],
                     u_multiplier=[0.5, 1],
@@ -203,7 +204,6 @@ class Scenario(BaseScenario):
 
             world.add_agent(agent)  # Add the agent to the world
             self.agents.append(agent)
-
 
         ################
         # Add tasks
@@ -225,7 +225,6 @@ class Scenario(BaseScenario):
             world.add_landmark(task)
             self.tasks.append(task)
 
-
         ################
         # Add obstacles
         ################
@@ -242,14 +241,12 @@ class Scenario(BaseScenario):
             world.add_landmark(obstacle)
             self.obstacles.append(obstacle)
 
-
         ################
         # Init Reward Tracking
         ################        
         self.completed_tasks = torch.zeros((batch_dim, self.max_n_tasks), device=device)
         self.stored_tasks = torch.full(self.completed_tasks.shape, True, device=device)
         self.shared_tasks_rew = torch.zeros(batch_dim, device=device)
-        
         
         ################
         # Init High-Level Graph Details
@@ -442,7 +439,8 @@ class Scenario(BaseScenario):
 
     def observation(self, agent: Agent):
         # TODO: Return BOTH global observation for learner and local agent observation for planner
-        obs = {
+
+        local_obs = {
             
             "obs_tasks": torch.stack(
                 [task.state.pos for task in self.tasks],
@@ -456,27 +454,23 @@ class Scenario(BaseScenario):
                 [obstacle.state.pos for obstacle in self.obstacles],
                 # dim=-1
             ),
-            # : torch.cat(
-            #     [
-            #         task.state.pos for task in self.tasks
-            #     ]
-            #     + [
-            #         obstacle.state.pos for obstacle in self.obstacles
-            #     ],
-            #     dim=-1,
-            # ),
             "pos": agent.state.pos,
             "vel": agent.state.vel,
         }
         if not isinstance(agent.dynamics, Holonomic):
             # Non-holonomic agents need to know angular states
-            obs.update(
+            local_obs.update(
                 {
                     "rot": agent.state.rot,
                     "ang_vel": agent.state.ang_vel,
                 }
             )
-        return obs
+
+        agent.obs = local_obs # Agent obs for local planning
+
+        # TODO Collect mothership global obs for role assignments
+
+        return local_obs
 
     def done(self) -> Tensor:
         # print("Completed tasks:", self.completed_tasks)
