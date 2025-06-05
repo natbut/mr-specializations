@@ -242,6 +242,16 @@ class Scenario(BaseScenario):
             self.obstacles.append(obstacle)
 
         ################
+        # Add Mothership
+        ################
+        self.base = Landmark(name=f"base",
+                             collide=True,
+                             color=Color.GREEN,
+                             shape=Sphere(radius=self.agent_radius*1.5),
+                             )
+        world.add_landmark(self.base)
+
+        ################
         # Init Reward Tracking
         ################        
         self.completed_tasks = torch.zeros((batch_dim, self.max_n_tasks), device=device)
@@ -262,6 +272,11 @@ class Scenario(BaseScenario):
 
         self.explored_cell_centers = torch.zeros(self.discrete_cell_centers.shape)
 
+        ################
+        # Init Heuristic Details
+        ################
+        self.frontiers = torch.zeros((self.discrete_cell_centers.shape[:-1] + (4,2,)), device=device)
+        self.comms_pts = torch.zeros((batch_dim, self.max_n_agents), device=device) # TODO Should be derived from number of agents
 
         ## ELEMENT STORAGE ##
         self.storage_pos = torch.full((batch_dim, 2), 2, device=device, dtype=torch.float32)
@@ -286,10 +301,10 @@ class Scenario(BaseScenario):
         return world
 
     def reset_world_at(self, env_index: int = None):
-        print("SCENARIO RESETTING")
         ScenarioUtils.spawn_entities_randomly(
             self.world.agents
-            + self.obstacles,
+            + self.obstacles
+            + [self.base],
             # + self.tasks,  # List of entities to spawn
             self.world,
             env_index,  # Pass the env_index so we only reset what needs resetting
@@ -309,6 +324,11 @@ class Scenario(BaseScenario):
         self.discrete_cell_explored.fill_(False)
         self.discrete_cell_features.fill_(0)
         self.explored_cell_centers.fill_(0)
+
+        # RESET ADDITIONAL HEURISTIC OBS
+        self.frontiers.fill_(0)
+        self.comms_pts.fill_(0)
+        self._compute_frontier_pts()
 
     def reward(self, agent: Agent):
         is_first = agent == self.world.agents[0]
@@ -343,25 +363,33 @@ class Scenario(BaseScenario):
         
         # Process environment updates
         if is_last:
-            # TOGGLE NEWLY-EXPLORED REGIONS
+            # == TOGGLE NEWLY-EXPLORED REGIONS ==
             # print("Agents pos shape:", self.agents_pos.shape, " Cell centers shape:", self.discrete_cell_centers.shape)
             agents_cell_dists = torch.min(torch.cdist(self.discrete_cell_centers, self.agents_pos), dim=-1).values # for each cell, dist to each agent
             # print("\nAgents cell dists:", agents_cell_dists, " Shape:", agents_cell_dists.shape)
-            self.discrete_cell_explored = torch.where(
-                agents_cell_dists < self.discrete_resolution/2,
-                True,
-                self.discrete_cell_explored
-                )
+
+            # Mark cells as explored if any agent is within the square bounds of the cell
+            # For each cell, check if any agent is within half the cell width/height in both x and y
+            cell_centers = self.discrete_cell_centers  # [B, N_cells, 2]
+            agent_pos = self.agents_pos  # [B, N_agents, 2]
+            # Expand dims for broadcasting: [B, N_cells, 1, 2] - [B, 1, N_agents, 2]
+            diff = (cell_centers.unsqueeze(2) - agent_pos.unsqueeze(1)).abs()
+            # Check if both x and y diffs are within half_res
+            in_cell = (diff[..., 0] <= self.discrete_resolution / 2) & (diff[..., 1] <= self.discrete_resolution / 2)
+            in_cell = in_cell.any(dim = -1) # Collapse to [B, N_cells]
+            # print("In cell:", in_cell, "shape:", in_cell.shape, "Discrete explore shape:", self.discrete_cell_explored.shape)
+            # If any agent is in the cell, mark as explored
+            self.discrete_cell_explored = torch.where(in_cell, in_cell, self.discrete_cell_explored)
             # print("EXPLORE STATUS:", self.discrete_cell_explored)
             B = self.world.batch_dim
             explored_cell_ids = [torch.nonzero(self.discrete_cell_explored[b], as_tuple=False).squeeze(1) for b in range(B)]
             self.explored_cell_centers = [self.discrete_cell_centers[b, ids] for b, ids in enumerate(explored_cell_ids)]
-            # print("EXPLORE CELL CENTERS:", self.explored_cell_centers)
+            # print("EXPLORED CELL CENTERS:", self.explored_cell_centers)
 
             occupied_positions_agents = [self.agents_pos]
             for i, task in enumerate(self.tasks):
                 
-                # MOVE COMPLETED TASKS OUT OF BOUNDS (TO STORAGE)
+                # == MOVE COMPLETED TASKS OUT OF BOUNDS (TO STORAGE) ==
                 occupied_positions_tasks = [
                                             o.state.pos.unsqueeze(1)
                                             for o in self.tasks
@@ -379,9 +407,8 @@ class Scenario(BaseScenario):
                     task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[i]
 
                 
-                # SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY)
+                # == SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY) ==
                     # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
-                
                 for idx in range(self.world.batch_dim):
                     spawn_prob = self.tasks_respawn_rate * len(self.explored_cell_centers[idx])
                     # print("Spawn prob:", spawn_prob)
@@ -411,6 +438,20 @@ class Scenario(BaseScenario):
                         task.state.pos[idx] = spawn_pos
                         self.stored_tasks[idx, i] = False
                         # print("Updated task state pos:", task.state.pos)
+
+                
+                # == UPDATE FRONTIERS & COMMS ==
+                # TODO Update frontiers
+                # print("Computing frontiers...")
+                # print("FRONTIERS:", self.frontiers)
+                
+                # TODO Compute comms pts
+                
+                # == UPDATE DISCRETE CELL FEATURES ==
+                # TODO Tasks per cell
+                # TODO Obstacles per cell
+                # TODO Agents per cell
+                # TODO Frontiers per cell
     
 
         tasks_reward = (
@@ -420,6 +461,34 @@ class Scenario(BaseScenario):
         rews = tasks_reward + self.time_rew
 
         return rews.unsqueeze(-1) # [B,1]
+    
+    def _compute_frontier_pts(self):
+        # For each cell, store the centerpoints of its 4 neighbors (left, right, down, up)
+        # If a neighbor does not exist (out of bounds), fill with NaN
+        B, N_cells, _ = self.discrete_cell_centers.shape
+        device = self.discrete_cell_centers.device
+        neighbor_offsets = torch.tensor([
+            [-self.discrete_resolution, 0],  # left
+            [self.discrete_resolution, 0],   # right
+            [0, -self.discrete_resolution],  # down
+            [0, self.discrete_resolution],   # up
+        ], device=device)
+
+        # Build a mapping from cell position to index for each batch
+        for b in range(B):
+            centers = self.discrete_cell_centers[b]  # [N_cells, 2]
+            for idx, pos in enumerate(centers):
+                for n, offset in enumerate(neighbor_offsets):
+                    neighbor_pos = pos + offset
+                    # Check if neighbor is within world bounds
+                    if (
+                        -self.world_spawning_x <= neighbor_pos[0] <= self.world_spawning_x
+                        and -self.world_spawning_y <= neighbor_pos[1] <= self.world_spawning_y
+                    ):
+                        self.frontiers[b, idx, n] = neighbor_pos
+                    else:
+                        # print(f"neighbor {neighbor_pos} out of bounds")
+                        self.frontiers[b, idx, n] = torch.inf
     
     def agent_tasks_reward(self, agent):
         """Reward for covering targets"""
@@ -440,20 +509,65 @@ class Scenario(BaseScenario):
     def observation(self, agent: Agent):
         # TODO: Return BOTH global observation for learner and local agent observation for planner
 
+        # Apply the exploration mask across all worlds at once
+        # self.frontiers: [B, N_cells, 4, 2], self.discrete_cell_explored: [B, N_cells]
+        # This will give a list of [N_explored_cells, 4, 2] for each batch/world
+        # Vectorized masked frontiers computation for efficiency
+        B, N_cells, N_neighbors, _ = self.frontiers.shape
+        device = self.frontiers.device
+
+        # Get explored mask and explored centers for all batches
+        explored_mask = self.discrete_cell_explored  # [B, N_cells]
+        explored_centers = [
+            self.discrete_cell_centers[b][explored_mask[b]] for b in range(B)
+        ]  # List of [N_explored, 2] per batch
+
+        # Gather frontiers for explored cells in each batch
+        masked_frontiers = [
+            self.frontiers[b][explored_mask[b]].clone() for b in range(B)
+        ]  # List of [N_explored, 4, 2] per batch
+
+        # For each batch, mask out neighbors that are already explored (set to inf)
+        for b in range(B):
+            if explored_centers[b].shape[0] == 0:
+                continue
+            # [N_explored, 4, 2] -> [N_explored*4, 2]
+            neighbors = masked_frontiers[b].reshape(-1, 2)
+            # [N_explored*4, N_explored, 2]
+            diff = neighbors.unsqueeze(1) - explored_centers[b].unsqueeze(0)
+            is_close = torch.isclose(diff, torch.zeros_like(diff), atol=1e-6)
+            is_explored = torch.all(is_close, dim=2).any(dim=1)  # [N_explored*4]
+            # Set already-explored neighbors to inf
+            neighbors[is_explored] = torch.tensor([torch.inf, torch.inf], device=device)
+            masked_frontiers[b] = neighbors.reshape(-1, N_neighbors, 2)
+
+        # Pad masked_frontiers so all entries have the same length for torch.stack
+        max_len = max(f.shape[0] for f in masked_frontiers)
+        for b in range(B):
+            n = masked_frontiers[b].shape[0]
+            if n < max_len:
+                pad_shape = (max_len - n, N_neighbors, 2)
+                pad = torch.full(pad_shape, torch.inf, device=device)
+                masked_frontiers[b] = torch.cat([masked_frontiers[b], pad], dim=0)
+
+        # print(f"Masked frontiers for 0: {torch.stack(masked_frontiers, dim=0)[0]}")
+
         local_obs = {
-            
             "obs_tasks": torch.stack(
                 [task.state.pos for task in self.tasks],
-                # dim=-1
+                dim=1
             ),
             "obs_agents": torch.stack(
                 [agent.state.pos for agent in self.world.agents],
-                # dim=-1
+                dim=1
             ),
             "obs_obstacles": torch.stack(
                 [obstacle.state.pos for obstacle in self.obstacles],
-                # dim=-1
+                dim=1
             ),
+            "obs_frontiers": torch.stack(masked_frontiers, dim=0),
+            "obs_comms_midpt": self.comms_pts,
+            "obs_base": self.base.state.pos,
             "pos": agent.state.pos,
             "vel": agent.state.vel,
         }
@@ -467,8 +581,21 @@ class Scenario(BaseScenario):
             )
 
         agent.obs = local_obs # Agent obs for local planning
+        # print(local_obs)
 
         # TODO Collect mothership global obs for role assignments
+        
+        global_obs = {
+            "cell_feats": self.discrete_cell_features,
+
+            "cell_pos": self.explored_cell_centers,
+
+            "rob_pos": torch.stack(
+                [agent.state.pos for agent in self.world.agents],
+                dim=1
+            ),
+
+        }
 
         return local_obs
 

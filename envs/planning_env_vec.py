@@ -157,6 +157,7 @@ class VMASPlanningEnv(EnvBase):
     def _reset(self, obs_tensordict=None) -> TensorDict:
         """Reset all VMAS worlds and return initial state."""
         sim_obs = self.sim_env.reset()[0] # Gets global obs from agent 0
+        # print("RESET SIM OBS:", sim_obs)
         # out.set("step_count", torch.full(self.batch_size, 1))
         # print("Reset TDict:", obs)
         # print("Expanded:", [(x_i, edges_i) for x_i, edges_i in zip(self.graph_obs["x"], self.graph_obs["edge_index"])])
@@ -187,7 +188,6 @@ class VMASPlanningEnv(EnvBase):
         # print("\n= Pre-rollout step! =")
         for t in range(self.macro_step):
             verbose = False
-            # if t == 0: verbose = True
             # Compute agent trajectories & get actions
             u_action = []
             for i, agent in enumerate(self.sim_env.agents):
@@ -227,7 +227,8 @@ class VMASPlanningEnv(EnvBase):
 
 
         # print("Rewards:", rewards, "\nDones:", dones.unsqueeze(1))
-        # rewards = rewards / (self.horizon*(self.sim_env.n_agents*0.9)) # NOTE ADDED NORMALIZATION FACTOR TO MAX PER-STEP REWARD
+        
+        print("STEP SIM OBS:", sim_obs[0])
 
         # Construct next state representation   
         next_state = TensorDict(

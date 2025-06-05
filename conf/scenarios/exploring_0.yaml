@@ -6,14 +6,14 @@ max_n_agents_car: 0
 max_n_tasks: 8
 max_n_obstacles: 4
 
-agent_radius: 0.05
+agent_radius: 0.03
 
 world_spawning_x: 1
 world_spawning_y: 1
 
 comms_rendering_range: 0
 
-tasks_respawn_rate: 0.002
+tasks_respawn_rate: 0.001
 task_comp_range: 0.1
 
 min_distance_between_entities: 0.05
