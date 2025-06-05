@@ -1,6 +1,7 @@
 from experiment_vec import train_PPO
 # from experiment import train_PPO
-from envs.scenarios.SR_tasks import Scenario
+# from envs.scenarios.SR_tasks import Scenario
+from envs.scenarios.explore_comms_tasks import Scenario
 
 import cProfile
 import pstats
@@ -14,10 +15,10 @@ with cProfile.Profile() as pr:
         # Env, Scenario & params
         scenario = Scenario()  
         scenario_configs = [
-            "conf/scenarios/SR_tasks_5.yaml",
+            "conf/scenarios/exploring_0.yaml",
         ]
         env_configs = [
-            "conf/envs/planning_env_vec_4.yaml",
+            "conf/envs/planning_env_explore.yaml",
         ]
 
         # RL Hyperparams
@@ -44,7 +45,7 @@ with cProfile.Profile() as pr:
     stats.sort_stats(pstats.SortKey.TIME)
     # Now you have two options, either print the data or save it as a file
     stats.print_stats() # Print The Stats
-    stats.dump_stats("eval2.prof") # Saves the data in a file, can me used to see the data visually
+    stats.dump_stats("eval_explore.prof") # Saves the data in a file, can me used to see the data visually
 
 
     # == Problem/Project Notes ==

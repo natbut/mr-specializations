@@ -279,7 +279,7 @@ class PlanningAgent(Agent):
             num_samps += 1
 
             # If point is in obstacle, continue
-            if self._obstacle_check(world_idx, samp_pos):
+            if not self._obstacle_free_check(world_idx, samp_pos):
                 if verbose: print("Pt in obstacle")
                 continue
 
@@ -292,6 +292,7 @@ class PlanningAgent(Agent):
 
             # Only link if path to best parent is obstacle-free
             if self._is_path_obstacle_free(V[idx_best], samp_pos, world_idx):
+                if verbose: print("Path is obstacle free")
                 parents[len(V)] = idx_best  # Assign best neighbor as samp_pos parent
                 costs[len(V)] = costs[idx_best] + torch.norm(samp_pos - V[idx_best])
                 E.append((idx_best, len(V)))
@@ -305,8 +306,8 @@ class PlanningAgent(Agent):
                             costs[idx_n] = new_cost
                             E.append((len(V), idx_n))
 
-            # Add sampled position to vertices
-            V.append(samp_pos)
+                # Add sampled position to vertices
+                V.append(samp_pos)
 
         # Extract path: find node with best heuristic value
         vals = []
@@ -334,21 +335,22 @@ class PlanningAgent(Agent):
     def _is_path_obstacle_free(self, start, end, world_idx, num_checks=10):
         for alpha in torch.linspace(0, 1, steps=num_checks):
             interp = start * (1 - alpha) + end * alpha
-            if self._obstacle_check(world_idx, interp):
+            if not self._obstacle_free_check(world_idx, interp):
+                # print("OBSTACLE IN PATH")
                 return False
         return True
     
 
-    def _obstacle_check(self, world_idx, pos, buffer=0.1, verbose=False):
+    def _obstacle_free_check(self, world_idx, pos, buffer=0.1, verbose=False):
         """
         Returns true if pos is not within buffer radius of the centerpoint
         of any obstacles in agent's observations
         """
         # print("Agent obstacles:\n", self.obs["obs_obstacles"])
-        obstacles_pos = self.obs["obs_obstacles"][:, world_idx]
+        obstacles_pos = self.obs["obs_obstacles"][world_idx]
         if verbose: print("world", world_idx, "obstacle locs:\n", obstacles_pos)
 
-        clearances = torch.abs(torch.norm(obstacles_pos - pos)) < buffer
+        clearances = torch.abs(torch.norm(obstacles_pos - pos, dim=1)) > buffer
         if verbose: print("Clearances:", clearances)
 
         return clearances.all()
@@ -398,6 +400,7 @@ class PlanningAgent(Agent):
         target_waypt = []
         if self.trajs == []:
             if verbose: print("Initializing trajectories...")
+            self.traj_idx = []
             for i in range(heuristic_weights.shape[0]):
                 self.trajs.append(self._compute_trajectory_cont(i, current_pos, heuristic_weights, heuristic_eval_fns, horizon, verbose=verbose))
                 self.traj_idx.append(0) # start at waypoint 0 for each traj in batch
@@ -420,9 +423,9 @@ class PlanningAgent(Agent):
 
                 # If we are at end of trajectory, compute new trajectory
                 if old_idx == next_idx:
-                    if i == 0: print(f"AGENT {self.name} COMPLETED TRAJ. Recomputing...")
+                    if verbose and i == 0: print(f"AGENT {self.name} COMPLETED TRAJ. Recomputing...")
                     traj = self._compute_trajectory_cont(i, current_pos, heuristic_weights, heuristic_eval_fns, horizon, verbose=verbose)
-                    if i == 0: print("New traj:", traj)
+                    if verbose and i == 0: print("New traj:", traj)
                     self.trajs[i] = traj
                     self.traj_idx[i] = 0
 

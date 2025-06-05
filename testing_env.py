@@ -14,7 +14,7 @@ if __name__ == "__main__":
         "conf/scenarios/exploring_0.yaml",
     ]
     env_configs = [
-        "conf/envs/planning_env_vec_explore.yaml",
+        "conf/envs/planning_env_explore.yaml",
     ]
 
     env = VMASPlanningEnv(Scenario(),
@@ -26,7 +26,7 @@ if __name__ == "__main__":
     env.render = True
 
     # act = [torch.stack([torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], device="cuda")]) for _ in range(8)]
-    actions = torch.tensor([1.0, 0.0, 0.0], device="cuda")
+    actions = torch.tensor([0.0, 0.0, 1.0], device="cuda")
     actions = torch.stack([actions for _ in range(2)]) # stack for robots
     actions = torch.stack([actions for _ in range(8)]) # stack for envs
     
