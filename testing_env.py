@@ -26,8 +26,11 @@ if __name__ == "__main__":
     env.render = True
 
     # act = [torch.stack([torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], device="cuda")]) for _ in range(8)]
-    actions = torch.tensor([0.0, 0.0, 1.0], device="cuda")
-    actions = torch.stack([actions for _ in range(2)]) # stack for robots
+    actions = torch.tensor([0.01, 0.01, 0.01, 0.01, 0.01], device="cuda")
+    actions = torch.stack([actions for _ in range(3)]) # stack for robots
+    actions[0][0] = 1.0
+    actions[1][1] = 1.0
+    actions[2][2] = 1.0
     actions = torch.stack([actions for _ in range(8)]) # stack for envs
     
     print("Actions:", actions)
