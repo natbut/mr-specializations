@@ -14,16 +14,16 @@ from vmas.simulator.dynamics.kinematic_bicycle import KinematicBicycle
 from vmas.simulator.scenario import BaseScenario
 
 try:
-    from agents.planning_agent import PlanningAgent
+    from agents.planning_agent_accel import PlanningAgent
 except:
     import os
     import sys
     sys.path.append(os.path.abspath(os.path.join('agents', '..')))
     print("\n",sys.path)
-    from agents.planning_agent import PlanningAgent
+    from agents.planning_agent_accel import PlanningAgent
 
 from vmas.simulator.utils import (ANGULAR_FRICTION, DRAG, LINEAR_FRICTION,
-                                   Color, ScenarioUtils)
+                                  Color, ScenarioUtils)
 
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
@@ -456,12 +456,15 @@ class Scenario(BaseScenario):
                                 task_j_pos_b = self.tasks[j].state.pos[b_idx].unsqueeze(0) # [1, 2]
                                 # Check if task_j_pos_b is NOT equal to storage_pos[b_idx]
                                 if not torch.isclose(task_j_pos_b, self.storage_pos[b_idx], atol=1e-6).all():
-                                    active_other_tasks_pos_b_filtered.append(task_j_pos_b)
+                                    active_other_tasks_pos_b_filtered.append(task_j_pos_b.unsqueeze(1)) # [1,1,2]
                         
-                        occupied_positions_for_b_idx = torch.cat(
-                            [current_agents_pos_b] + active_other_tasks_pos_b_filtered,
-                            dim=1,
-                        ) # [1, NumOccupied, 2]
+                        if active_other_tasks_pos_b_filtered:
+                            occupied_positions_for_b_idx = torch.cat(
+                                [current_agents_pos_b] + active_other_tasks_pos_b_filtered,
+                                dim=1,
+                            ) # [1, NumOccupied, 2]
+                        else:
+                            occupied_positions_for_b_idx = current_agents_pos_b
 
                         # Select a random explored cell for spawning for this batch
                         explored_cell_indices_b = torch.nonzero(self.discrete_cell_explored[b_idx], as_tuple=False).squeeze(1)
@@ -562,7 +565,7 @@ class Scenario(BaseScenario):
 
             # Calculate difference between each candidate neighbor and each explored center
             # [B, N_cells, 4, 1, 2] - [B, 1, 1, max_explored_cells, 2]
-            diff = self.candidate_frontiers.unsqueeze(3) - padded_explored_centers.unsqueeze(2).unsqueeze(1)
+            diff = self.candidate_frontiers.unsqueeze(3) - padded_explored_centers.unsqueeze(1).unsqueeze(1)
             # Resulting shape: [B, N_cells, 4, max_explored_cells, 2]
 
             # Check if differences are close to zero (meaning a neighbor's center matches an explored cell's center)
@@ -657,7 +660,7 @@ class Scenario(BaseScenario):
 
         if max_num_frontiers_per_batch == 0:
             # If no cells are explored or no valid frontiers, return a tensor of out-of-bounds markers
-            return torch.full((B, 1, N_neighbors, 2), 100.0, device=device) # Return a minimal tensor, to be stacked
+            return torch.full((B, N_cells, N_neighbors, 2), 100.0, device=device) # Return a minimal tensor, to be stacked
 
         padded_frontiers_list = []
         for b in range(B):
@@ -738,7 +741,7 @@ class Scenario(BaseScenario):
                 [obstacle.state.pos for obstacle in self.obstacles],
                 dim=1
             ),
-            "obs_frontiers": torch.stack(self.frontiers, dim=0), # self.frontiers is already a list of B-sized tensors, so stack them
+            "obs_frontiers": self.frontiers,
             "obs_base": self.base.state.pos,
             "pos": agent.state.pos,
             "vel": agent.state.vel,
@@ -800,7 +803,7 @@ class Scenario(BaseScenario):
             xform = rendering.Transform()
             xform.set_translation(center[0].item(), center[1].item()) # .item() for rendering positions
             cell.add_attr(xform)
-            cell.set_color(Color.LIGHT_GRAY.rgb[0], Color.LIGHT_GRAY.rgb[1], Color.LIGHT_GRAY.rgb[2], 0.2) # Light gray with transparency
+            cell.set_color(0.95,0.95,0.95, 0.2) # Light gray with transparency
             geoms.append(cell)
         
         return geoms
@@ -808,4 +811,4 @@ class Scenario(BaseScenario):
 
 if __name__ == "__main__":
     scenario = Scenario()
-    render_interactively(scenario, display_info=True)
+    render_interactively(scenario, display_info=False)

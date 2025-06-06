@@ -1,32 +1,9 @@
 # Nathan Butler
 
-import typing
-from typing import Dict, List, Callable, Sequence, Union
+from typing import Dict, Union
 
-import numpy as np
 import torch
-from torch import Tensor
-from vmas import render_interactively
-from vmas.simulator.core import Agent, Box, Landmark, Sphere, World, Shape, Sensor, Dynamics, Entity
-from vmas.simulator.dynamics.diff_drive import DiffDrive
-from vmas.simulator.dynamics.holonomic import Holonomic
-from vmas.simulator.dynamics.kinematic_bicycle import KinematicBicycle
-from vmas.simulator.scenario import BaseScenario
-
-try:
-    from agents.planning_agent import PlanningAgent
-except:
-    import os
-    import sys
-    sys.path.append(os.path.abspath(os.path.join('agents', '..')))
-    print("\n",sys.path)
-    # from agents.planning_agent import PlanningAgent # This was causing circular import, it's the class itself.
-
-from vmas.simulator.utils import (ANGULAR_FRICTION, DRAG, LINEAR_FRICTION,
-                                   Color, ScenarioUtils)
-
-if typing.TYPE_CHECKING:
-    from vmas.simulator.rendering import Geom
+from vmas.simulator.core import *
 
 
 class PlanningAgent(Agent):
@@ -104,6 +81,7 @@ class PlanningAgent(Agent):
         This function remains largely iterative due to the sequential nature of RRT,
         but internal helper functions are vectorized where possible.
         """
+        # verbose = True
 
         # Establish sampling range based on current position and horizon
         samp_rng_x = (max(-1.0, current_pos[0].item() - horizon), 
@@ -200,7 +178,10 @@ class PlanningAgent(Agent):
         idx = goal_idx
         while idx is not None:
             traj.append(V[idx])
-            idx = parents[idx]
+            if type(idx) is int:
+                idx = parents[idx]
+            else:
+                idx = parents[idx.item()] # Handle tensors
         traj = traj[::-1]
         if verbose: print(f"Backtracked traj: {traj}")
         
