@@ -19,12 +19,16 @@ class VMASPlanningEnv(EnvBase):
             ):
         
         # TODO: Make this part of conf file
-        self.heuristic_eval_fns = [nearest_task, nearest_agent, nearest_frontier,]
+        self.heuristic_eval_fns = [nearest_task, 
+                                   nearest_comms_midpt, 
+                                   nearest_frontier, 
+                                   nearest_agent, 
+                                   goto_base]
         
         self.scenario = scenario
 
         self.num_envs = env_kwargs.pop("num_envs", 1)
-        self.horizon = env_kwargs.pop("horizon", 0.5)
+        self.horizon = env_kwargs.pop("horizon", 0.25)
         self.macro_step = env_kwargs.pop("macro_step", 10) # Number of sub-steps to execute per step 
         self.render = env_kwargs.pop("render", False)
 
@@ -104,7 +108,7 @@ class VMASPlanningEnv(EnvBase):
         
             n_features = self.scenario.num_feats #self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
 
-            MAX_CELLS = 1000
+            MAX_CELLS = 100
 
             # Define Observation & Action Specs
             self.observation_spec = Composite(
@@ -156,12 +160,15 @@ class VMASPlanningEnv(EnvBase):
 
     def _reset(self, obs_tensordict=None) -> TensorDict:
         """Reset all VMAS worlds and return initial state."""
-        sim_obs = self.sim_env.reset()[0] # Gets global obs from agent 0
-        # print("RESET SIM OBS:", sim_obs)
+        sim_obs = self.sim_env.reset() # Gets global obs from agent 0
+
+        print("STEP SIM OBS:", sim_obs[0])
+        obs = TensorDict(sim_obs[0], batch_size=self.batch_size, device=self.device)
+        
         # out.set("step_count", torch.full(self.batch_size, 1))
-        # print("Reset TDict:", obs)
+        print("Reset TDict:", obs)
         # print("Expanded:", [(x_i, edges_i) for x_i, edges_i in zip(self.graph_obs["x"], self.graph_obs["edge_index"])])
-        return TensorDict(sim_obs)
+        return obs
 
     def _step(self, actions: TensorDict) -> TensorDict:
         """

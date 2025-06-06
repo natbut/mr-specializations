@@ -118,23 +118,23 @@ def train_PPO(scenario,
         env = TransformedEnv(
             base_env,
             Compose(
-                # ObservationNorm(in_keys=["cell_feats"]), TODO RETURN THESE FOR FULL ENV
-                # ObservationNorm(in_keys=["cell_pos"]),
-                # ObservationNorm(in_keys=["rob_pos"]),
-                # DoubleToFloat(in_keys=["cell_feats", "cell_pos", "rob_pos"]),
+                ObservationNorm(in_keys=["cell_feats"]),
+                ObservationNorm(in_keys=["cell_pos"]),
+                ObservationNorm(in_keys=["rob_pos"]),
+                DoubleToFloat(in_keys=["cell_feats", "cell_pos", "rob_pos"]),
                 StepCounter(),
             ),
             device=device,
         )
 
         # initialize observation norm stats
-        # for t in env.transform: TODO RETURN THESE FOR FULL ENV
-        #     if isinstance(t, ObservationNorm):
-        #         print("Normalizing obs", t.in_keys)
-        #         t.init_stats(num_iter=10*num_envs, reduce_dim=[0,1], cat_dim=0) # num_iter should be divisible (?) or match (?) horizon in env
+        for t in env.transform:
+            if isinstance(t, ObservationNorm):
+                print("Normalizing obs", t.in_keys)
+                t.init_stats(num_iter=10*num_envs, reduce_dim=[0,1], cat_dim=0) # num_iter should be divisible (?) or match (?) horizon in env
 
         # # Evaluate environment initialization
-        # print("normalization constant shape:\n", env.transform[0].loc.shape)
+        print("normalization constant shape:\n", env.transform[0].loc.shape)
 
         print("observation_spec:\n", env.observation_spec)
         print("reward_spec:\n", env.reward_spec)
@@ -152,6 +152,8 @@ def train_PPO(scenario,
         num_heuristics = model_config["num_heuristics"]
         d_feedforward = model_config["d_feedforward"]
         d_model = model_config["d_model"]
+
+        # TODO Transformer models will need to filter out unexplored cells
 
         tf_act = EnvironmentTransformer(num_features=num_features,
                                            num_heuristics=num_heuristics,
