@@ -269,6 +269,8 @@ class Scenario(BaseScenario):
         self.discrete_cell_centers = torch.stack([cell_centers for _ in range(batch_dim)])
         self.discrete_cell_features = torch.zeros(self.discrete_cell_centers.shape[:-1] + (self.num_feats,), device=device)
         self.discrete_cell_explored = torch.full(self.discrete_cell_centers.shape[:-1], False, device=device)
+        
+        self.explored_cell_ids = torch.zeros((batch_dim, 1), device=device)
 
         self.stored_explored_cell_centers = torch.full(self.discrete_cell_centers.shape, 2.0*world.x_semidim, device=device)
 
@@ -281,23 +283,6 @@ class Scenario(BaseScenario):
 
         ## ELEMENT STORAGE ##
         self.storage_pos = torch.full((batch_dim, 2), 2, device=device, dtype=torch.float32)
-        
-        # torch.cat([
-        #                 torch.full(
-        #                     (batch_dim, 1, 1),
-        #                     2, # MOVE OUT OF BOUNDS
-        #                     device=device,
-        #                     dtype=torch.float32,
-        #                 ),
-        #                 torch.full(
-        #                     (batch_dim, 1, 1),
-        #                     2, # MOVE OUT OF BOUNDS
-        #                     device=device,
-        #                     dtype=torch.float32,
-        #                 ),
-        #             ],
-        #             dim=2,
-        #         )
 
         return world
 
@@ -332,12 +317,26 @@ class Scenario(BaseScenario):
         self.discrete_cell_explored.fill_(False)
         self.discrete_cell_features.fill_(0)
         self.stored_explored_cell_centers.fill_(2.0*self.world.x_semidim)
+        self.explored_cell_ids = [] #torch.zeros((self.world.batch_dim, 1), device=self.world.device)
 
         # RESET ADDITIONAL HEURISTIC OBS
         self.candidate_frontiers.fill_(0)
         self.frontiers = [self.candidate_frontiers[b].clone() for b in range(self.candidate_frontiers.shape[0])]
         self.comms_pts.fill_(0)
         self._compute_frontier_pts()
+        
+        # == INIT EXPLORED CELLS ==
+        self.agents_pos = torch.stack(
+                [a.state.pos for a in self.world.agents], dim=1)
+        self.tasks_pos = torch.stack(
+            [t.state.pos for t in self.tasks], dim=1)
+        self._update_exploration()
+        
+        # == UPDATE FRONTIERS ==
+        self.frontiers = self._get_frontier_pts()
+        
+        # == UPDATE DISCRETE CELL FEATURES ==
+        self._updated_discrete_cell_features() 
 
     def reward(self, agent: Agent):
         is_first = agent == self.world.agents[0]
@@ -377,25 +376,9 @@ class Scenario(BaseScenario):
             # agents_cell_dists = torch.min(torch.cdist(self.discrete_cell_centers, self.agents_pos), dim=-1).values # for each cell, dist to each agent
             # print("\nAgents cell dists:", agents_cell_dists, " Shape:", agents_cell_dists.shape)
 
-            # Mark cells as explored if any agent is within the square bounds of the cell
-            # For each cell, check if any agent is within half the cell width/height in both x and y
-            cell_centers = self.discrete_cell_centers  # [B, N_cells, 2]
-            agent_pos = self.agents_pos  # [B, N_agents, 2]
-            # Expand dims for broadcasting: [B, N_cells, 1, 2] - [B, 1, N_agents, 2]
-            diff = (cell_centers.unsqueeze(2) - agent_pos.unsqueeze(1)).abs()
-            # Check if both x and y diffs are within half_res
-            in_cell = (diff[..., 0] <= self.discrete_resolution / 2) & (diff[..., 1] <= self.discrete_resolution / 2)
-            in_cell = in_cell.any(dim = -1) # Collapse to [B, N_cells]
-            # print("In cell:", in_cell, "shape:", in_cell.shape, "Discrete explore shape:", self.discrete_cell_explored.shape)
-            # If any agent is in the cell, mark as explored
-            self.discrete_cell_explored = torch.where(in_cell, in_cell, self.discrete_cell_explored)
-            # print("EXPLORE STATUS:", self.discrete_cell_explored)
-            B = self.world.batch_dim
-            explored_cell_ids = [torch.nonzero(self.discrete_cell_explored[b], as_tuple=False).squeeze(1) for b in range(B)]
-            # Efficiently update explored_cell_centers for all batches
-            for b, ids in enumerate(explored_cell_ids):
-                self.stored_explored_cell_centers[b, ids] = self.discrete_cell_centers[b, ids]
-            explored_cell_centers = [self.discrete_cell_centers[b, ids] for b, ids in enumerate(explored_cell_ids)]
+            self._update_exploration()
+            
+            explored_cell_centers = [self.discrete_cell_centers[b, ids] for b, ids in enumerate(self.explored_cell_ids)]
 
             occupied_positions_agents = [self.agents_pos]
             for i, task in enumerate(self.tasks):
@@ -450,7 +433,7 @@ class Scenario(BaseScenario):
                         self.stored_tasks[idx, i] = False
                         # print("Updated task state pos:", task.state.pos)
 
-                # == UPDATE FRONTIERS & COMMS ==
+                # == UPDATE FRONTIERS ==
                 self.frontiers = self._get_frontier_pts()
                 
                 # == UPDATE DISCRETE CELL FEATURES ==
@@ -463,6 +446,28 @@ class Scenario(BaseScenario):
         rews = tasks_reward + self.time_rew
 
         return rews.unsqueeze(-1) # [B,1]
+    
+    def _update_exploration(self):
+        # Mark cells as explored if any agent is within the square bounds of the cell
+        # For each cell, check if any agent is within half the cell width/height in both x and y
+        cell_centers = self.discrete_cell_centers  # [B, N_cells, 2]
+        agent_pos = self.agents_pos  # [B, N_agents, 2]
+        # Expand dims for broadcasting: [B, N_cells, 1, 2] - [B, 1, N_agents, 2]
+        diff = (cell_centers.unsqueeze(2) - agent_pos.unsqueeze(1)).abs()
+        # Check if both x and y diffs are within half_res
+        in_cell = (diff[..., 0] <= self.discrete_resolution / 2) & (diff[..., 1] <= self.discrete_resolution / 2)
+        in_cell = in_cell.any(dim = -1) # Collapse to [B, N_cells]
+        # print("In cell:", in_cell, "shape:", in_cell.shape, "Discrete explore shape:", self.discrete_cell_explored.shape)
+        # If any agent is in the cell, mark as explored
+        self.discrete_cell_explored = torch.where(in_cell, in_cell, self.discrete_cell_explored)
+        # print("EXPLORE STATUS:", self.discrete_cell_explored)
+        B = self.world.batch_dim
+        self.explored_cell_ids = [torch.nonzero(self.discrete_cell_explored[b], as_tuple=False).squeeze(1) for b in range(B)]
+        # print("EXPLORED IDS", self.explored_cell_ids)
+        # Efficiently update explored_cell_centers for all batches
+        for b, ids in enumerate(self.explored_cell_ids):
+            self.stored_explored_cell_centers[b, ids] = self.discrete_cell_centers[b, ids]
+        
 
     def _updated_discrete_cell_features(self):
         # For each cell, compute features:
@@ -667,10 +672,43 @@ class Scenario(BaseScenario):
         # print("Cell pos (0):", self.explored_cell_centers[0])
         # print(" shape:", self.explored_cell_centers.shape)
         
-        global_obs = {
-            "cell_feats": self.discrete_cell_features,
+        
+        # Find max number of explored cells across all batches
+        max_n_ids = max(ids.shape[0] if isinstance(ids, torch.Tensor) else len(ids) for ids in self.explored_cell_ids)
+        # Zero padding
+        pad_value_feat = 0.0  # For features, pad with zeros
+        pad_value_pos = 0.0 # 2.0 * self.world.x_semidim  # For positions, pad with out-of-bounds value
 
-            "cell_pos": self.stored_explored_cell_centers,
+        # Pad features and centers for each batch
+        padded_cell_features = []
+        padded_cell_centers = []
+        for b, ids in enumerate(self.explored_cell_ids):
+            if isinstance(ids, torch.Tensor) and ids.numel() > 0:
+                feats = self.discrete_cell_features[b, ids]
+                centers = self.discrete_cell_centers[b, ids]
+            else:
+                feats = self.discrete_cell_features.new_zeros((0, self.num_feats))
+                centers = self.discrete_cell_centers.new_full((0, 2), pad_value_pos)
+            n = feats.shape[0]
+            if n < max_n_ids:
+                pad_feats = feats.new_full((max_n_ids - n, feats.shape[1]), pad_value_feat)
+                pad_centers = centers.new_full((max_n_ids - n, centers.shape[1]), pad_value_pos)
+                feats = torch.cat([feats, pad_feats], dim=0)
+                centers = torch.cat([centers, pad_centers], dim=0)
+            padded_cell_features.append(feats)
+            padded_cell_centers.append(centers)
+
+        cell_features = torch.stack(padded_cell_features, dim=0)
+        cell_centers = torch.stack(padded_cell_centers, dim=0)
+        
+        # print("Cell features:", cell_features)
+        # print("Cell centers:", cell_centers)
+        
+        global_obs = {
+            "cell_feats": cell_features,
+
+            "cell_pos": cell_centers,
+                #self.stored_explored_cell_centers,
 
             "rob_pos": torch.stack(
                 [agent.state.pos for agent in self.world.agents],
