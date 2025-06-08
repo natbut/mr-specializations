@@ -5,7 +5,6 @@ from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import torch
-import wandb
 import yaml
 from tensordict.nn import TensorDictModule
 from tensordict.nn.distributions import NormalParamExtractor
@@ -14,8 +13,8 @@ from torchrl.collectors import SyncDataCollector
 from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
 from torchrl.data.replay_buffers.storages import LazyTensorStorage
-from torchrl.envs import (Compose, DoubleToFloat, ObservationNorm, StepCounter,
-                          TransformedEnv, CatTensors, ParallelEnv)
+from torchrl.envs import (CatTensors, Compose, DoubleToFloat, ObservationNorm,
+                          ParallelEnv, StepCounter, TransformedEnv)
 from torchrl.envs.utils import (ExplorationType, check_env_specs,
                                 set_exploration_type)
 from torchrl.modules import ProbabilisticActor, TanhNormal, ValueOperator
@@ -23,8 +22,10 @@ from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 from tqdm import tqdm
 
+import wandb
 from envs.planning_env_vec import VMASPlanningEnv
-from models.transformer import EnvironmentTransformer, EnvironmentCriticTransformer
+from models.transformer import (EnvironmentCriticTransformer,
+                                EnvironmentTransformer)
 
 
 def load_yaml_to_kwargs(file_path: str) -> None:
@@ -118,9 +119,9 @@ def train_PPO(scenario,
         env = TransformedEnv(
             base_env,
             Compose(
-                ObservationNorm(in_keys=["cell_feats"]),
-                ObservationNorm(in_keys=["cell_pos"]),
-                ObservationNorm(in_keys=["rob_pos"]),
+                # ObservationNorm(in_keys=["cell_feats"]),
+                # ObservationNorm(in_keys=["cell_pos"]),
+                # ObservationNorm(in_keys=["rob_pos"]),
                 DoubleToFloat(in_keys=["cell_feats", "cell_pos", "rob_pos"]),
                 StepCounter(),
             ),
@@ -128,22 +129,22 @@ def train_PPO(scenario,
         )
 
         # initialize observation norm stats
-        for t in env.transform:
-            if isinstance(t, ObservationNorm):
-                print("Normalizing obs", t.in_keys)
-                t.init_stats(num_iter=10*num_envs, reduce_dim=[0,1], cat_dim=0) # num_iter should be divisible (?) or match (?) horizon in env
+        # for t in env.transform:
+        #     if isinstance(t, ObservationNorm):
+        #         print("Normalizing obs", t.in_keys)
+        #         t.init_stats(num_iter=10*num_envs, reduce_dim=[0,1], cat_dim=0) # num_iter should be divisible (?) or match (?) horizon in env
 
         # # Evaluate environment initialization
-        print("normalization constant shape:\n", env.transform[0].loc.shape)
+        # print("normalization constant shape:\n", env.transform[0].loc.shape)
 
-        print("observation_spec:\n", env.observation_spec)
-        print("reward_spec:\n", env.reward_spec)
-        print("input_spec:\n", env.input_spec)
-        print("action_spec (as defined by input_spec):\n", env.action_spec)
+        # print("observation_spec:\n", env.observation_spec)
+        # print("reward_spec:\n", env.reward_spec)
+        # print("input_spec:\n", env.input_spec)
+        # print("action_spec (as defined by input_spec):\n", env.action_spec)
 
-        check_env_specs(env)
+        # check_env_specs(env)
 
-        rollout = env.rollout(3)
+        rollout = env.rollout(3, return_contiguous=False)
         print("rollout of three steps:", rollout)
         print("Shape of the rollout TensorDict:", rollout.batch_size)
 
@@ -163,7 +164,7 @@ def train_PPO(scenario,
         
         tf_crit = EnvironmentCriticTransformer(num_features=num_features,
                                                 d_model=d_model,
-                                                use_attention_pool=False,
+                                                use_attention_pool=True,
                                                 ).to(device)
 
         policy_module = TensorDictModule(
@@ -331,7 +332,7 @@ def train_PPO(scenario,
                 # it will then execute this policy at each step.
                 with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
                     # execute a rollout with the trained policy
-                    eval_rollout = env.rollout(3, policy_module)
+                    eval_rollout = env.rollout(3, policy_module, return_contiguous=False)
                     env.reset()
                     logs["eval reward"].append(eval_rollout["next", "reward"].mean().item())
                     logs["eval reward (sum)"].append(

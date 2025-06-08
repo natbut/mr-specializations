@@ -1,11 +1,10 @@
 
 import torch
-
-# from envs.scenarios.SR_tasks import Scenario
-from envs.scenarios.explore_comms_tasks import Scenario
-from envs.planning_env_vec import VMASPlanningEnv
 from tensordict.tensordict import TensorDict
 
+from envs.planning_env_vec import VMASPlanningEnv
+# from envs.scenarios.SR_tasks import Scenario
+from envs.scenarios.explore_comms_tasks import Scenario
 from experiment_vec import load_yaml_to_kwargs
 
 if __name__ == "__main__":

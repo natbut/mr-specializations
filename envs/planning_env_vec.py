@@ -1,11 +1,11 @@
-import torch
-from torchrl.envs import EnvBase
-from torchrl.data import Unbounded, Composite, Bounded
-from tensordict.tensordict import TensorDict
+from typing import Dict, Tuple
 
-from vmas.simulator.scenario import BaseScenario
+import torch
+from tensordict.tensordict import TensorDict
+from torchrl.data import Bounded, Composite, Unbounded
+from torchrl.envs import EnvBase
 from vmas import make_env
-from typing import Tuple, Dict
+from vmas.simulator.scenario import BaseScenario
 
 from envs.heuristics import *
 
@@ -53,12 +53,12 @@ class VMASPlanningEnv(EnvBase):
             self.observation_spec = Composite(
                 obs=Composite(
                     cell_feats=Unbounded(
-                        shape=(self.node_dim**2, n_features),
+                        shape=(-1, n_features),
                         dtype=torch.float64,
                         device=device
                         ),
                     cell_pos=Unbounded(
-                        shape=(self.node_dim**2, 2),
+                        shape=(-1, 2),
                         dtype=torch.float64,
                         device=device
                     ),
@@ -108,18 +108,18 @@ class VMASPlanningEnv(EnvBase):
         
             n_features = self.scenario.num_feats #self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
 
-            MAX_CELLS = 100
+            # MAX_CELLS = 100
 
             # Define Observation & Action Specs
             self.observation_spec = Composite(
                 # obs=Composite(
                     cell_feats=Unbounded(
-                        shape=(self.num_envs, MAX_CELLS, n_features),
+                        shape=(self.num_envs, -1, n_features),
                         dtype=torch.float64,
                         device=device
                         ),
                     cell_pos=Unbounded(
-                        shape=(self.num_envs, MAX_CELLS, 2),
+                        shape=(self.num_envs, -1, 2),
                         dtype=torch.float64,
                         device=device
                     ),
@@ -162,7 +162,7 @@ class VMASPlanningEnv(EnvBase):
         """Reset all VMAS worlds and return initial state."""
         sim_obs = self.sim_env.reset() # Gets global obs from agent 0
 
-        print("STEP SIM OBS:", sim_obs[0])
+        # print("STEP SIM OBS:", sim_obs[0])
         obs = TensorDict(sim_obs[0], batch_size=self.batch_size, device=self.device)
         
         # out.set("step_count", torch.full(self.batch_size, 1))
@@ -235,7 +235,7 @@ class VMASPlanningEnv(EnvBase):
 
         # print("Rewards:", rewards, "\nDones:", dones.unsqueeze(1))
         
-        print("STEP SIM OBS:", sim_obs[0])
+        # print("STEP SIM OBS:", sim_obs[0])
 
         # Construct next state representation   
         next_state = TensorDict(

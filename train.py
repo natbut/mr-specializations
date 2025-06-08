@@ -1,10 +1,10 @@
-from experiment_vec import train_PPO
+import cProfile
+import pstats
+
 # from experiment import train_PPO
 # from envs.scenarios.SR_tasks import Scenario
 from envs.scenarios.explore_comms_tasks import Scenario
-
-import cProfile
-import pstats
+from experiment_vec import train_PPO
 
 with cProfile.Profile() as pr:
 
@@ -28,7 +28,7 @@ with cProfile.Profile() as pr:
 
         # Model Params
         model_configs = [
-            "conf/models/mat_7.yaml",
+            "conf/models/mat_8.yaml",
         ]
 
         
