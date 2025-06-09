@@ -8,7 +8,7 @@ from vmas import make_env
 from vmas.simulator.scenario import BaseScenario
 
 from envs.heuristics import *
-
+import time
 
 class VMASPlanningEnv(EnvBase):
     def __init__(
@@ -197,14 +197,18 @@ class VMASPlanningEnv(EnvBase):
             verbose = False
             # Compute agent trajectories & get actions
             u_action = []
+            # t_start = time.time()
             for i, agent in enumerate(self.sim_env.agents):
                 u_action.append(agent.get_control_action_cont(heuristic_weights[:,i,:],
                                                               self.heuristic_eval_fns,
                                                               self.horizon,
                                                               verbose
                                                               )) # get next actions from agent controllers
+            # print(f"Planing took {time.time() - t_start} s")
+            # t_start = time.time()
             # print("U-ACTION:", u_action)
             sim_obs, rews, dones, info = self.sim_env.step(u_action)
+            # print(f"Step took {time.time() - t_start} s")
             # print("Rewards:", rewards, "stacked rews:", rews, "sum:", rews.sum(dim=0))
 
             # NOTE Ignores additional rewards from envs that reset during rollout (from completing early)

@@ -3,6 +3,6 @@ num_envs: 8
 
 max_steps: 500
 macro_step: 100
-horizon: 0.15
+horizon: 0.25
 
 render: False

@@ -249,9 +249,12 @@ def train_PPO(scenario,
                 # We re-compute it at each epoch as its value depends on the value
                 # network which is updated in the inner loop.
 
-                data = tensordict_data.flatten(0,1)
+                data = tensordict_data #.flatten(0,1)
+                print("Data:", data)
                 # data["next","reward"] = data["next","reward"] # / (0.9*60) #data["next", "reward"].max()
+                print("Sample log prob before mod: ", data["sample_log_prob"])
                 data["sample_log_prob"] = data["sample_log_prob"].sum(dim=1).unsqueeze(-1)
+                print("Sample log prob after mod: ", data["sample_log_prob"])
 
                 # Compute advantage values and add to tdict
                 advantage_module(data)
