@@ -1,9 +1,8 @@
 from typing import Union
 
-import numpy as np
 import torch
 from vmas.simulator.core import *
-
+import time
 
 class PlanningAgent(Agent):
     
@@ -74,20 +73,21 @@ class PlanningAgent(Agent):
                                  current_pos, 
                                  heuristic_weights, 
                                  heuristic_eval_fns, 
+                                 rewire=False,
                                  horizon=0.25, 
-                                 max_pts=25, 
+                                 max_pts=30,
+                                 random_sampling=True,
                                  verbose=False):
 
         # Establish sampling range
-        samp_rng_x = (max(-1, current_pos[world_idx][0]-horizon), 
-                      min(1, current_pos[world_idx][0]+horizon))
-        samp_rng_y = (max(-1, current_pos[world_idx][1]-horizon), 
-                      min(1, current_pos[world_idx][1]+horizon))
+        samp_rng_x = (max(-1.0, min(1.0, current_pos[world_idx][0] - horizon)), 
+                  min(1.0, max(-1.0, current_pos[world_idx][0] + horizon)))
+        samp_rng_y = (max(-1.0, min(1.0, current_pos[world_idx][1] - horizon)), 
+                  min(1.0, max(-1.0, current_pos[world_idx][1] + horizon)))
         if verbose: print(f"Sampling range from current pos {current_pos[world_idx]}: \nx rng: {samp_rng_x} \ny rng: {samp_rng_y}")
 
         # Initialize tree with current position as root
         V = [current_pos[world_idx].clone()]
-        E = []
         parents = {0: None}
         costs = {0: 0}
         rad = 0.2 * horizon  # Neighborhood radius for rewiring
@@ -96,47 +96,79 @@ class PlanningAgent(Agent):
 
         # Sample up to max_pts points
         # TODO: Might be able to vectorize this
+        # t_start = time.time()
+        alpha = torch.linspace(0, 1, steps=4)
+        # Uniformly sample points in a circle around the current position
+        angles = torch.linspace(0.0, 2 * torch.pi, steps=max_pts)
+        samp_dist_x = horizon * torch.cos(angles)
+        samp_dist_y = horizon * torch.sin(angles)
         while num_samps < max_pts:
-            
+            # st_start = time.time()
             # Sample point within traj horizon
-            samp_pos = self._random_pos(samp_rng_x, samp_rng_y, current_pos.dtype, current_pos.device)
+            if random_sampling:
+                samp_pos = self._random_pos(samp_rng_x, samp_rng_y, dtype=current_pos.dtype, device=current_pos.device)
+            else:
+                # Uniformly sample points around current position
+                pos_x = current_pos[world_idx][0] + samp_dist_x[num_samps]
+                pos_y = current_pos[world_idx][1] + samp_dist_y[num_samps]
+                samp_pos = torch.tensor([pos_x, pos_y], dtype = current_pos.dtype, device=current_pos.device)
+
             if verbose: print(f"Sampled pt: {samp_pos}")
             num_samps += 1
+            # print(f"\t\t Positon sample time: {time.time() - st_start} s")
+            # st_start = time.time()
 
             # If point is in obstacle, continue
             if not self._obstacle_free_check(world_idx, samp_pos):
                 if verbose: print("Pt in obstacle")
                 continue
+            
+            # print(f"\t\t Obstacle check time: {time.time() - st_start} s")
+            # st_start = time.time()
 
             # Find nearest point in search tree & compute cost
             idx_nearest = self._find_nearest_node(V, samp_pos)
-            cost_new = costs[idx_nearest] + torch.norm(samp_pos - V[idx_nearest])
+            candidate_pos = V[idx_nearest] * (1 - alpha[1]) + samp_pos * alpha[1]
+            # Probably need to have an additional obstacle check here
+            if not self._is_path_obstacle_free(V[idx_nearest], candidate_pos, world_idx, num_checks=4):
+                continue
+            cost_new = costs[idx_nearest] + torch.norm(candidate_pos - V[idx_nearest])
+            parents[len(V)] = idx_nearest
+            costs[len(V)] = cost_new
 
-            # Find neighbors & best neighbor
-            idx_best, neighbors = self._find_neighbors(V, samp_pos, costs, rad)
+            # print(f"\t\t Nearest node time: {time.time() - st_start} s")
+            # st_start = time.time()
 
-            # Only link if path to best parent is obstacle-free
-            if self._is_path_obstacle_free(V[idx_best], samp_pos, world_idx):
-                if verbose: print("Path is obstacle free")
-                parents[len(V)] = idx_best  # Assign best neighbor as samp_pos parent
-                costs[len(V)] = costs[idx_best] + torch.norm(samp_pos - V[idx_best])
-                E.append((idx_best, len(V)))
-                # Rewire neighbors if cheaper to use new point and path is obstacle-free
-                for idx_n in neighbors:
-                    # Use the cost from the root to the new node (costs[len(V)]) plus the cost from new node to neighbor
-                    new_cost = costs[len(V)] + torch.norm(samp_pos - V[idx_n])
-                    if new_cost < costs[idx_n]:
-                        if self._is_path_obstacle_free(samp_pos, V[idx_n], world_idx):
-                            parents[idx_n] = len(V)
-                            costs[idx_n] = new_cost
-                            E.append((len(V), idx_n))
+            if rewire: # TODO Update rewire step if going to use this
+                # Find neighbors & best neighbor
+                idx_best, neighbors = self._find_neighbors(V, samp_pos, costs, rad)
 
-                # Add sampled position to vertices
-                V.append(samp_pos)
+                # Only link if path to best parent is obstacle-free
+                if self._is_path_obstacle_free(V[idx_best], samp_pos, world_idx):
+                    if verbose: print("Path is obstacle free")
+                    parents[len(V)] = idx_best  # Assign best neighbor as samp_pos parent
+                    costs[len(V)] = costs[idx_best] + torch.norm(samp_pos - V[idx_best])
+                    # Rewire neighbors if cheaper to use new point and path is obstacle-free
+                    for idx_n in neighbors:
+                        # Use the cost from the root to the new node (costs[len(V)]) plus the cost from new node to neighbor
+                        new_cost = costs[len(V)] + torch.norm(samp_pos - V[idx_n])
+                        if new_cost < costs[idx_n]:
+                            if self._is_path_obstacle_free(samp_pos, V[idx_n], world_idx):
+                                parents[idx_n] = len(V)
+                                costs[idx_n] = new_cost
 
-        # Extract path: find node with best heuristic value
+            # Add sampled position to vertices
+            V.append(candidate_pos)
+
+        # print(f"\tSampling pts took {time.time() - t_start} s")
+        # t_start = time.time()
+
+        # Extract path: find leaf node with best heuristic value
         vals = []
         for i, v in enumerate(V):
+            # Skip if vertex is a parent of another vertex (only eval leaf nodes)
+            if i in parents.values():
+                continue
             val = 0
             for i, fn in enumerate(heuristic_eval_fns):
                 fn_out = heuristic_weights[world_idx][i] * fn(self.obs, world_idx, v)
@@ -155,6 +187,8 @@ class PlanningAgent(Agent):
             idx = parents[idx]
         traj = traj[::-1]
         if verbose: print(f"Backtracked traj: {traj}")
+
+        # print(f"\tHeuristic eval & backtrack path took {time.time() - t_start} s")
         
         return traj
     
@@ -167,7 +201,7 @@ class PlanningAgent(Agent):
                 return False
         return True
 
-    def _obstacle_free_check(self, world_idx, pos, buffer=0.1, verbose=False):
+    def _obstacle_free_check(self, world_idx, pos, buffer=0.05, verbose=False):
         """
         Returns true if pos is not within buffer radius of the centerpoint
         of any obstacles in agent's observations

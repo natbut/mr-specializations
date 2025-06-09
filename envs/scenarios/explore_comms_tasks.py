@@ -115,7 +115,7 @@ class Scenario(BaseScenario):
             batch_dim,  # Number of environments simulated
             device,  # Device for simulation
             substeps=1,  # Number of physical substeps (more yields more accurate but more expensive physics)
-            collision_force=500,  # Paramneter to tune for collisions
+            collision_force=50,  # Paramneter to tune for collisions
             dt=0.1,  # Simulation timestep
             gravity=(0.0, 0.0),  # Customizable gravity
             drag=DRAG,  # Physics parameters

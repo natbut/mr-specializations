@@ -23,7 +23,7 @@ with cProfile.Profile() as pr:
 
         # RL Hyperparams
         rl_configs = [
-            "conf/algos/ppo_3_8.yaml",
+            "conf/algos/ppo_1.yaml",
         ]
 
         # Model Params
