@@ -44,7 +44,7 @@ with cProfile.Profile() as pr:
     stats = pstats.Stats(pr)
     stats.sort_stats(pstats.SortKey.TIME)
     # Now you have two options, either print the data or save it as a file
-    stats.print_stats() # Print The Stats
+    # stats.print_stats() # Print The Stats
     stats.dump_stats("eval_explore.prof") # Saves the data in a file, can me used to see the data visually
 
 
