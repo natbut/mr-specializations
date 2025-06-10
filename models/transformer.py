@@ -160,6 +160,225 @@ class EnvironmentTransformer(nn.Module):
         num_heads=4,
         num_layers=2,
         dropout_rate=0.2,
+        noise_std=0.1,
+        max_cells=100 # <-- IMPORTANT: match padding size
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.num_heuristics = num_heuristics
+        self.max_robots = max_robots
+        self.noise_std = noise_std
+        self.max_cells = max_cells
+
+        # Embeddings
+        self.feature_embed = nn.Linear(num_features, d_model)
+        self.pos_embed = PositionalEncoding(d_model)
+        self.agent_embed = nn.Embedding(max_robots, d_model)
+
+        # Transformer encoder
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=num_heads,
+            dim_feedforward=d_feedforward,
+            dropout=dropout_rate,
+            batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        # Transformer decoder (self + cross-attention)
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model,
+            nhead=num_heads,
+            dim_feedforward=d_feedforward,
+            dropout=dropout_rate,
+            batch_first=True
+        )
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+
+        # Output head: raw logits for Categorical
+        self.output_head = nn.Linear(d_model, 2 * num_heuristics)
+        self.norm_extractor = NormalParamExtractor()
+        self.calls = 0
+
+    # cell_lengths should be a tensor (B,) or (B, 1) indicating the actual number of cells
+    def forward(self, cell_features, cell_positions, num_cells, robot_positions):
+        unbatched = False
+        if cell_features.dim() == 2:
+            unbatched = True
+            cell_features = cell_features.unsqueeze(0)
+            cell_positions = cell_positions.unsqueeze(0)
+            robot_positions = robot_positions.unsqueeze(0)
+            num_cells = num_cells.unsqueeze(0) # Ensure cell_lengths is also batched
+
+        B, N_padded, _ = cell_features.shape # N_padded is MAX_CELLS
+        R = robot_positions.size(1)
+
+        # Create attention mask for padding
+        # mask is (B, N_padded) boolean tensor, True where token should be ignored (padding)
+        # N_padded is self.max_cells
+        mask = torch.arange(N_padded, device=cell_features.device).expand(B, N_padded) >= num_cells.unsqueeze(1)
+        # Transformer's `src_key_padding_mask` expects True for masked elements.
+
+        # === Encoder input ===
+        x_feat = self.feature_embed(cell_features)
+        x_pos = self.pos_embed(cell_positions) # Use the linear embedding for positions
+        x = x_feat + x_pos
+
+        # Pass the mask to the encoder
+        enc_out = self.encoder(x, src_key_padding_mask=mask)
+
+        # === Gather robot tokens ===
+        # TODO The gather operation still works fine with padded `enc_out` as long as `closest_idxs`
+        # correctly points to real tokens. If a robot's closest cell is padding, this logic
+        # needs to be handled (e.g., by ensuring closest_idxs only picks non-padded cells or
+        # by masking the resulting robot token). For now, assuming closest_idxs naturally avoids padding.
+        # If your `explored_cell_ids` ensures that there's always a real cell, this is fine.
+        with torch.no_grad():
+            # Adjust cell_pos_exp and robot_pos_exp to correctly handle padding during dists calculation
+            # You might want to ensure padded cell positions don't affect distances
+            # or simply rely on argmin naturally selecting non-padded entries if they exist.
+            # Assuming padded cells have 0.0 features and positions, they will likely be "far"
+            # or `argmin` might pick a padded one if all actual cells are gone.
+            # It's better to ensure `closest_idxs` only picks from valid cells.
+            
+            # Option 1: Explicitly set distances to padded elements to infinity
+            # This is more robust if you might have robots far from all real cells
+            cell_pos_exp = cell_positions.unsqueeze(1) # [B, 1, N_padded, 2]
+            robot_pos_exp = robot_positions.unsqueeze(2) # [B, R, 1, 2]
+            dists = torch.norm(robot_pos_exp - cell_pos_exp, dim=-1) # [B, R, N_padded]
+            
+            # Apply a large value to distances corresponding to padding
+            dists = dists.masked_fill(mask.unsqueeze(1), float('inf')) # [B, R, N_padded]
+
+            closest_idxs = torch.argmin(dists, dim=-1) # [B, R]
+
+        robot_tokens = torch.gather(
+            enc_out,
+            1,
+            closest_idxs.unsqueeze(-1).expand(-1, -1, self.d_model)
+        )   # [B, R, D]
+
+        # === Inject noise ===
+        if self.training and self.noise_std > 0:
+            robot_tokens = robot_tokens + torch.randn_like(robot_tokens) * self.noise_std
+
+        # === Add positional & agent-ID embeddings ===
+        # robot_positions: [B, R, 2]
+        robot_pos_enc = self.pos_embed(robot_positions) # Use linear embedding
+        robot_tokens = robot_tokens + robot_pos_enc # No need for PE on sequence for R (fixed)
+        
+        id_indices = torch.arange(R, device=robot_tokens.device)[None, :]
+        agent_id_enc = self.agent_embed(id_indices).expand(B, -1, -1)
+        robot_tokens = robot_tokens + agent_id_enc
+
+        # === Decoder ===
+        # The `memory_key_padding_mask` tells the decoder to ignore padded elements in `enc_out` (memory)
+        decoder_out = self.decoder(tgt=robot_tokens, memory=enc_out, memory_key_padding_mask=mask)
+
+        # === Heuristic outputs ===
+        vals = self.output_head(decoder_out)
+        h_loc, h_scale = self.norm_extractor(vals)
+
+        self.calls += 1
+        if self.calls % 1000 == 0:
+            print(f"Sample positional enc at call {self.calls}:\n", x_pos)
+            print(f"Sample encoder out at call {self.calls}:\n", enc_out)
+            print(f"Sample decoder out at call {self.calls}:\n", vals)
+            print(f"Sample h_weights loc at call {self.calls}:\n", h_loc)
+            print(f"Sample h_weights scale at call {self.calls}:\n", h_scale)
+
+        if unbatched:
+            return h_loc[0], h_scale[0]
+        return h_loc, h_scale
+    
+
+class EnvironmentCriticTransformer(nn.Module):
+    def __init__(
+        self,
+        num_features,
+        d_model=128,
+        num_heads=4,
+        num_layers=2,
+        use_attention_pool=True,
+        max_cells=200 # <-- IMPORTANT: Add this to match your padding size
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.use_attention_pool = use_attention_pool
+        self.max_cells = max_cells # Store max_cells
+
+        self.feature_embed = nn.Linear(num_features, d_model)
+        self.pos_embed = PositionalEncoding(d_model)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=num_heads, batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        if use_attention_pool:
+            self.attn_pool = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
+            self.query = nn.Parameter(torch.randn(1, 1, d_model))  # learned query
+
+        self.critic_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.Tanh(),
+            nn.Linear(d_model, 1)
+        )
+
+    # cell_lengths should be a tensor (B,) or (B, 1) indicating the actual number of cells
+    def forward(self, cell_feats, cell_pos, num_cells):
+        """
+        cell_feats: [B, N_padded, F]
+        cell_pos:   [B, N_padded, 2]
+        cell_lengths: [B,] or [B, 1] - actual number of cells
+        """
+        # Ensure cell_lengths is 1D or (B,1) if it's not already
+        if num_cells.ndim > 1:
+            num_cells = num_cells.squeeze(-1)
+
+        B, N_padded, _ = cell_feats.shape
+
+        # Create attention mask for padding
+        mask = torch.arange(N_padded, device=cell_feats.device).expand(B, N_padded) >= num_cells.unsqueeze(1)
+        # True means masked (ignored)
+
+        feat_emb = self.feature_embed(cell_feats)       # [B, N_padded, D]
+        pos_emb = self.pos_embed(cell_pos)       # [B, N_padded, D]
+        x = feat_emb + pos_emb
+
+        # Pass the mask to the encoder
+        enc_out = self.encoder(x, src_key_padding_mask=mask) # [B, N_padded, D]
+
+        if self.use_attention_pool:
+            B = enc_out.size(0)
+            q = self.query.expand(B, -1, -1)                # [B, 1, D]
+            # When using MultiheadAttention, `key_padding_mask` tells it to ignore certain key-value pairs
+            # The mask used here should be for the `enc_out` which serves as `key` and `value`.
+            attn_out, _ = self.attn_pool(q, enc_out, enc_out, key_padding_mask=mask) # [B, 1, D]
+            pooled = attn_out.squeeze(1)                    # [B, D]
+        else:
+            # If not using attention pool, simple mean pooling over padded elements needs masking
+            # Sum valid elements and divide by actual length
+            sum_pooled = (enc_out * (~mask).unsqueeze(-1)).sum(dim=1) # Sum only non-masked elements
+            # Avoid division by zero if cell_lengths is 0
+            pooled = sum_pooled / (num_cells.float().unsqueeze(-1).clamp(min=1e-5)) # Mean of non-masked elements
+
+        value = self.critic_head(pooled)                    # [B, 1]
+        return value
+    
+
+
+class EnvironmentTransformer_NoMask(nn.Module):
+    def __init__(
+        self,
+        num_features,
+        num_heuristics,
+        max_robots=4,
+        d_model=128,
+        d_feedforward=2048,
+        num_heads=4,
+        num_layers=2,
+        dropout_rate=0.2,
         noise_std=0.1
     ):
         super().__init__()
@@ -259,7 +478,7 @@ class EnvironmentTransformer(nn.Module):
         return h_loc, h_scale
     
 
-class EnvironmentCriticTransformer(nn.Module):
+class EnvironmentCriticTransformer_NoMask(nn.Module):
     def __init__(self, num_features, d_model=128, num_heads=4, num_layers=2, use_attention_pool=True):
         super().__init__()
         self.d_model = d_model

@@ -169,7 +169,7 @@ def train_PPO(scenario,
 
         policy_module = TensorDictModule(
             tf_act,
-            in_keys=[("cell_feats"), ("cell_pos"), ("rob_pos")],
+            in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"), ("rob_pos")],
             out_keys=["loc","scale"]
         )
 
@@ -188,7 +188,7 @@ def train_PPO(scenario,
 
         value_module = ValueOperator(
             module=tf_crit,
-            in_keys=[("cell_feats"), ("cell_pos")],
+            in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"),],
             out_keys=["state_value"]
         )
 
@@ -249,12 +249,15 @@ def train_PPO(scenario,
                 # We re-compute it at each epoch as its value depends on the value
                 # network which is updated in the inner loop.
 
-                data = tensordict_data #.flatten(0,1)
+                data = tensordict_data.flatten(0,1) # TODO investigate trajectory handling from this
                 print("Data:", data)
                 # data["next","reward"] = data["next","reward"] # / (0.9*60) #data["next", "reward"].max()
-                print("Sample log prob before mod: ", data["sample_log_prob"])
-                data["sample_log_prob"] = data["sample_log_prob"].sum(dim=1).unsqueeze(-1)
-                print("Sample log prob after mod: ", data["sample_log_prob"])
+                # print("Sample log prob before mod: ", data["sample_log_prob"])
+                data["sample_log_prob"] = data["sample_log_prob"].sum(dim=-1).unsqueeze(-1)
+                # print("Sample log prob after mod: ", data["sample_log_prob"])
+
+                # Zero pad cell_feats and cell_pos along dim 1 to the max length in the batch
+                # print("Cell feats:", data["cell_feats"], "shape:", data["cell_feats"].shape)
 
                 # Compute advantage values and add to tdict
                 advantage_module(data)
@@ -268,8 +271,6 @@ def train_PPO(scenario,
                     print("\nvalue_target:\n", data["value_target"][:10].cpu().tolist())
                     print("\nreward:\n", data["next", "reward"][:10].cpu().tolist())
                     print("\ndone:\n", data["next", "done"][:10].cpu().tolist())
-
-                # data_view = tensordict_data.reshape(-1)
 
                 replay_buffer.extend(data.to(device))
 
