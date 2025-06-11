@@ -134,14 +134,14 @@ class EnvironmentTransformerOLD(nn.Module):
         h_weights_loc, h_weights_scale = self.norm_extractor(vals)
         # print("Extracted params:\n", h_weights_loc, h_weights_scale)
         # h_weights_loc, h_weights_scale = self.norm_extractor(vals).chunk(2, dim=-1)
-
-        self.calls += 1
         if self.calls % 1000 == 0:
             print(f"Sample positional enc at call {self.calls}:\n", x_pos)
             print(f"Sample encoder out at call {self.calls}:\n", enc_out)
             print(f"Sample decoder out at call {self.calls}:\n", vals)
             print(f"Sample h_weights loc at call {self.calls}:\n", h_weights_loc)
             print(f"Sample h_weights scale at call {self.calls}:\n", h_weights_scale)
+
+        self.calls += 1
 
         if unbatched:
             return h_weights_loc[0], h_weights_scale[0] # removes batch dim from actions
@@ -218,6 +218,7 @@ class EnvironmentTransformer(nn.Module):
         # N_padded is self.max_cells
         mask = torch.arange(N_padded, device=cell_features.device).expand(B, N_padded) >= num_cells.unsqueeze(1)
         # Transformer's `src_key_padding_mask` expects True for masked elements.
+        # TODO evaluate mask
 
         # === Encoder input ===
         x_feat = self.feature_embed(cell_features)
@@ -279,13 +280,14 @@ class EnvironmentTransformer(nn.Module):
         vals = self.output_head(decoder_out)
         h_loc, h_scale = self.norm_extractor(vals)
 
-        self.calls += 1
         if self.calls % 1000 == 0:
             print(f"Sample positional enc at call {self.calls}:\n", x_pos)
             print(f"Sample encoder out at call {self.calls}:\n", enc_out)
             print(f"Sample decoder out at call {self.calls}:\n", vals)
             print(f"Sample h_weights loc at call {self.calls}:\n", h_loc)
             print(f"Sample h_weights scale at call {self.calls}:\n", h_scale)
+
+        self.calls += 1
 
         if unbatched:
             return h_loc[0], h_scale[0]
@@ -300,7 +302,7 @@ class EnvironmentCriticTransformer(nn.Module):
         num_heads=4,
         num_layers=2,
         use_attention_pool=True,
-        max_cells=200 # <-- IMPORTANT: Add this to match your padding size
+        max_cells=100 # <-- IMPORTANT: Add this to match your padding size
     ):
         super().__init__()
         self.d_model = d_model

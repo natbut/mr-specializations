@@ -398,7 +398,7 @@ class Scenario(BaseScenario):
                     # print("COMPLETED TASKS\nTask state pos:", task.state.pos)
                     # print("Completed tasks:", self.completed_tasks)
                     # print("Completed tasks[:,i]:", self.completed_tasks[:, i])
-                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos
+                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[i]
 
                 
                 # == SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY) ==

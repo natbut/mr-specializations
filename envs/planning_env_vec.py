@@ -76,17 +76,18 @@ class VMASPlanningEnv(EnvBase):
             self.action_spec = Bounded(
                 low=-torch.ones((
                                 self.sim_env.n_agents,
-                                n_features
+                                len(self.heuristic_eval_fns)
                                 ),
                                 device=device
                                 ),
                 high=torch.ones((
                                 self.sim_env.n_agents,
-                                n_features
+                                len(self.heuristic_eval_fns)
                                 ),
                                 device=device
                                 ),
-                shape=(self.sim_env.n_agents, n_features),
+                shape=(self.sim_env.n_agents, 
+                       len(self.heuristic_eval_fns)),
                 device=device
             )
 
@@ -171,7 +172,7 @@ class VMASPlanningEnv(EnvBase):
         obs = TensorDict(sim_obs[0], batch_size=self.batch_size, device=self.device)
         
         # out.set("step_count", torch.full(self.batch_size, 1))
-        print("Reset TDict:", obs)
+        # print("Reset TDict:", obs)
         # print("Expanded:", [(x_i, edges_i) for x_i, edges_i in zip(self.graph_obs["x"], self.graph_obs["edge_index"])])
         return obs
 
