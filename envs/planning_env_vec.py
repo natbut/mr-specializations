@@ -163,6 +163,8 @@ class VMASPlanningEnv(EnvBase):
                 shape=(self.num_envs, 1),
                 device=device
                 )
+            
+        self.steps = 0
 
     def _reset(self, obs_tensordict=None) -> TensorDict:
         """Reset all VMAS worlds and return initial state."""
@@ -199,6 +201,7 @@ class VMASPlanningEnv(EnvBase):
         for agent in self.sim_env.agents: # Reset agent trajectories
             agent.trajs = []
         # print("\n= Pre-rollout step! =")
+        self.steps += 1
         for t in range(self.macro_step):
             verbose = False
             # Compute agent trajectories & get actions
@@ -232,7 +235,8 @@ class VMASPlanningEnv(EnvBase):
                 )
                 frame_list.append(frame)
 
-            if dones.all():
+            if dones.any():
+                # print("Step", self.steps, "\nRETURNED DONES:", dones.unsqueeze(-1), "\nAccumulated rewards:", rewards)
                 break 
             
         if self.render:

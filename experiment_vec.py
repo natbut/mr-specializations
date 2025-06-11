@@ -213,7 +213,7 @@ def train_PPO(scenario,
             gamma=gamma,
             lmbda=lmbda,
             value_network=value_module,
-            average_gae=True,
+            # average_gae=True,
         )
 
         loss_module = ClipPPOLoss(
@@ -249,6 +249,8 @@ def train_PPO(scenario,
                 # We re-compute it at each epoch as its value depends on the value
                 # network which is updated in the inner loop.
 
+                print("Pre-flattened traj ids:", tensordict_data["collector", "traj_ids"][:].cpu().tolist())
+
                 data = tensordict_data.flatten(0,1) # TODO investigate trajectory handling from this
                 # print("Data:", data)
                 # data["next","reward"] = data["next","reward"] # / (0.9*60) #data["next", "reward"].max()
@@ -258,23 +260,23 @@ def train_PPO(scenario,
 
                 # Zero pad cell_feats and cell_pos along dim 1 to the max length in the batch
                 # print("Cell feats:", data["cell_feats"], "shape:", data["cell_feats"].shape)
+                
+                print("\nTensorDict data (flat):\n", data)
 
                 # Compute advantage values and add to tdict
                 advantage_module(data)
-
                 # if ep == 0:
                 print("\n EP:", ep)
-                # print("\nTensorDict data (flat):\n", data)
-                print("\nTraj IDs:\n", data["collector", "traj_ids"][:10].cpu().tolist())
+                print("\nTraj IDs:\n", data["collector", "traj_ids"][:].cpu().tolist())
                 print("\nSample log prob:\n", data["sample_log_prob"][:10].cpu().tolist())
                 print("\nAdvantage:\n", data["advantage"][:10].cpu().tolist())
                 print("\nstate_value:\n", data["state_value"][:10].cpu().tolist())
                 print("\nvalue_target:\n", data["value_target"][:10].cpu().tolist())
                 print("\nreward:\n", data["next", "reward"][:10].cpu().tolist())
-                print("\ndone:\n", data["next", "done"][:10].cpu().tolist())
-
-                EP: 0
-
+                print("\ndone:\n", data["next", "done"][:].cpu().tolist())
+                print("\nterminated:\n", data["next", "terminated"][:].cpu().tolist())
+                print("\nCurrent dones:\n", data["done"][:].cpu().tolist())
+                print("\nCurrent terminated:\n", data["terminated"][:].cpu().tolist())
 
                 replay_buffer.extend(data.to(device))
 
@@ -291,6 +293,10 @@ def train_PPO(scenario,
                     logs["loss_objective"].append(loss_vals["loss_objective"].item())
                     logs["loss_critic"].append(loss_vals["loss_critic"].item())
                     logs["loss_entropy"].append(loss_vals["loss_entropy"].item())
+
+                    print("\nLoss objective:", loss_vals["loss_objective"].item())
+                    print("\nLoss critic:", loss_vals["loss_critic"].item())
+
                     if use_wandb:
                         run.log({"train/loss_objective": loss_vals["loss_objective"].item()})
                         run.log({"train/loss_critic": loss_vals["loss_critic"].item()})
