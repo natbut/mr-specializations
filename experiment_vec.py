@@ -119,9 +119,9 @@ def train_PPO(scenario,
         env = TransformedEnv(
             base_env,
             Compose(
-                # ObservationNorm(in_keys=["cell_feats"]),
-                # ObservationNorm(in_keys=["cell_pos"]),
-                # ObservationNorm(in_keys=["rob_pos"]),
+                ObservationNorm(in_keys=["cell_feats"]),
+                ObservationNorm(in_keys=["cell_pos"]),
+                ObservationNorm(in_keys=["rob_pos"]),
                 DoubleToFloat(in_keys=["cell_feats", "cell_pos", "rob_pos"]),
                 StepCounter(),
             ),
@@ -129,18 +129,18 @@ def train_PPO(scenario,
         )
 
         # initialize observation norm stats
-        # for t in env.transform:
-        #     if isinstance(t, ObservationNorm):
-        #         print("Normalizing obs", t.in_keys)
-        #         t.init_stats(num_iter=10*num_envs, reduce_dim=[0,1], cat_dim=0) # num_iter should be divisible (?) or match (?) horizon in env
+        for t in env.transform:
+            if isinstance(t, ObservationNorm):
+                print("Normalizing obs", t.in_keys)
+                t.init_stats(num_iter=10*num_envs, reduce_dim=[0,1], cat_dim=0) # num_iter should be divisible (?) or match (?) horizon in env
 
         # # Evaluate environment initialization
-        # print("normalization constant shape:\n", env.transform[0].loc.shape)
+        print("normalization constant shape:\n", env.transform[0].loc.shape)
 
-        # print("observation_spec:\n", env.observation_spec)
-        # print("reward_spec:\n", env.reward_spec)
-        # print("input_spec:\n", env.input_spec)
-        # print("action_spec (as defined by input_spec):\n", env.action_spec)
+        print("observation_spec:\n", env.observation_spec)
+        print("reward_spec:\n", env.reward_spec)
+        print("input_spec:\n", env.input_spec)
+        print("action_spec (as defined by input_spec):\n", env.action_spec)
 
         # check_env_specs(env)
 
@@ -213,7 +213,7 @@ def train_PPO(scenario,
             gamma=gamma,
             lmbda=lmbda,
             value_network=value_module,
-            # average_gae=True,
+            average_gae=True,
         )
 
         loss_module = ClipPPOLoss(
@@ -250,7 +250,7 @@ def train_PPO(scenario,
                 # network which is updated in the inner loop.
 
                 data = tensordict_data.flatten(0,1) # TODO investigate trajectory handling from this
-                print("Data:", data)
+                # print("Data:", data)
                 # data["next","reward"] = data["next","reward"] # / (0.9*60) #data["next", "reward"].max()
                 # print("Sample log prob before mod: ", data["sample_log_prob"])
                 data["sample_log_prob"] = data["sample_log_prob"].sum(dim=-1).unsqueeze(-1)
@@ -262,15 +262,19 @@ def train_PPO(scenario,
                 # Compute advantage values and add to tdict
                 advantage_module(data)
 
-                if ep == 0:
-                    print("\nTensorDict data (flat):\n", data)
-                    print("\nTraj IDs:\n", data["collector", "traj_ids"][:10].cpu().tolist())
-                    print("\nSample log prob:\n", data["sample_log_prob"][:10].cpu().tolist())
-                    print("\nAdvantage:\n", data["advantage"][:10].cpu().tolist())
-                    print("\nstate_value:\n", data["state_value"][:10].cpu().tolist())
-                    print("\nvalue_target:\n", data["value_target"][:10].cpu().tolist())
-                    print("\nreward:\n", data["next", "reward"][:10].cpu().tolist())
-                    print("\ndone:\n", data["next", "done"][:10].cpu().tolist())
+                # if ep == 0:
+                print("\n EP:", ep)
+                # print("\nTensorDict data (flat):\n", data)
+                print("\nTraj IDs:\n", data["collector", "traj_ids"][:10].cpu().tolist())
+                print("\nSample log prob:\n", data["sample_log_prob"][:10].cpu().tolist())
+                print("\nAdvantage:\n", data["advantage"][:10].cpu().tolist())
+                print("\nstate_value:\n", data["state_value"][:10].cpu().tolist())
+                print("\nvalue_target:\n", data["value_target"][:10].cpu().tolist())
+                print("\nreward:\n", data["next", "reward"][:10].cpu().tolist())
+                print("\ndone:\n", data["next", "done"][:10].cpu().tolist())
+
+                EP: 0
+
 
                 replay_buffer.extend(data.to(device))
 
@@ -322,7 +326,7 @@ def train_PPO(scenario,
             lr_str = f"lr policy: {logs['lr'][-1]: 4.4f}"
             if i % 5 == 0:
                 # print("\n!! Running Evaluation")
-                env.base_env.render = True
+                env.base_env.render = False # TODO disabled to avoid error
                 env.base_env.count = 0
                 render_name = f"render_{i}"
                 render_fp = os.path.join(f"{test_folder_path}/gif/", render_name)

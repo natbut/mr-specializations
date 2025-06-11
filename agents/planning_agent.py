@@ -75,7 +75,7 @@ class PlanningAgent(Agent):
                                  heuristic_eval_fns, 
                                  rewire=False,
                                  horizon=0.25, 
-                                 max_pts=30,
+                                 max_pts=10,
                                  random_sampling=True,
                                  verbose=False):
 
