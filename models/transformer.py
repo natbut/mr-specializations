@@ -229,7 +229,7 @@ class EnvironmentTransformer(nn.Module):
         enc_out = self.encoder(x, src_key_padding_mask=mask)
 
         # === Gather robot tokens ===
-        # TODO The gather operation still works fine with padded `enc_out` as long as `closest_idxs`
+        # NOTE: The gather operation still works fine with padded `enc_out` as long as `closest_idxs`
         # correctly points to real tokens. If a robot's closest cell is padding, this logic
         # needs to be handled (e.g., by ensuring closest_idxs only picks non-padded cells or
         # by masking the resulting robot token). For now, assuming closest_idxs naturally avoids padding.
@@ -252,6 +252,15 @@ class EnvironmentTransformer(nn.Module):
             dists = dists.masked_fill(mask.unsqueeze(1), float('inf')) # [B, R, N_padded]
 
             closest_idxs = torch.argmin(dists, dim=-1) # [B, R]
+
+            bad_idx = (mask.gather(1, closest_idxs)).any()
+            if bad_idx:
+                print("\n!!! ==> closest_idxs includes padding index!")
+                print("\tNum cells check:\n\t", num_cells)
+                print("\tRobot positions:\n\t", robot_positions)
+                print("\tDists:\n\t", dists)
+
+        assert (num_cells > 0).all(), "Zero real cells in one or more batches!"
 
         robot_tokens = torch.gather(
             enc_out,
