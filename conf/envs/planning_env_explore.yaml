@@ -1,7 +1,7 @@
 
 num_envs: 8
 
-max_steps: 600
+max_steps: 800
 macro_step: 100
 horizon: 0.25
 

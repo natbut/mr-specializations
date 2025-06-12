@@ -15,10 +15,10 @@ with cProfile.Profile() as pr:
         # Env, Scenario & params
         scenario = Scenario()  
         scenario_configs = [
-            "conf/scenarios/exploring_0.yaml",
+            "conf/scenarios/exploring_0.yaml", #SR_tasks_5.yaml",
         ]
         env_configs = [
-            "conf/envs/planning_env_explore.yaml",
+            "conf/envs/planning_env_explore.yaml", #planning_env_vec_4.yaml",
         ]
 
         # RL Hyperparams
