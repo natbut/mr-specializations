@@ -304,7 +304,11 @@ class Scenario(BaseScenario):
             spawn_radius = 0.2  # You can adjust this value as needed
             offset = torch.randn_like(self.base.state.pos)  # Random direction
             offset = offset / torch.norm(offset, dim=-1, keepdim=True) * torch.rand_like(self.base.state.pos) * spawn_radius
-            agent.state.pos = self.base.state.pos + offset
+            # Compute new position and clamp within world bounds
+            new_pos = self.base.state.pos + offset
+            new_pos[..., 0] = torch.clamp(new_pos[..., 0], -self.world.x_semidim, self.world.x_semidim)
+            new_pos[..., 1] = torch.clamp(new_pos[..., 1], -self.world.y_semidim, self.world.y_semidim)
+            agent.state.pos = new_pos
 
         # RESET TASKS
         for task in self.tasks:
@@ -383,7 +387,6 @@ class Scenario(BaseScenario):
             occupied_positions_agents = [self.agents_pos]
             for i, task in enumerate(self.tasks):
                 
-                # == MOVE COMPLETED TASKS OUT OF BOUNDS (TO STORAGE) ==
                 occupied_positions_tasks = [
                                             o.state.pos.unsqueeze(1)
                                             for o in self.tasks
@@ -394,12 +397,12 @@ class Scenario(BaseScenario):
                     dim=1,
                 )
 
+                # == MOVE COMPLETED TASKS OUT OF BOUNDS (TO STORAGE) ==
                 if self.completed_tasks[:, i].any():
                     # print("COMPLETED TASKS\nTask state pos:", task.state.pos)
                     # print("Completed tasks:", self.completed_tasks)
                     # print("Completed tasks[:,i]:", self.completed_tasks[:, i])
                     task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[i]
-
                 
                 # == SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY) ==
                     # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
@@ -454,8 +457,9 @@ class Scenario(BaseScenario):
         agent_pos = self.agents_pos  # [B, N_agents, 2]
         # Expand dims for broadcasting: [B, N_cells, 1, 2] - [B, 1, N_agents, 2]
         diff = (cell_centers.unsqueeze(2) - agent_pos.unsqueeze(1)).abs()
-        # Check if both x and y diffs are within half_res
-        in_cell = (diff[..., 0] <= self.discrete_resolution / 2) & (diff[..., 1] <= self.discrete_resolution / 2)
+        # Add a small epsilon to include boundary cases due to floating point precision
+        epsilon = 1e-6 # NOTE: added in small epsilon to avoid precision issues for robot cell placement.
+        in_cell = (diff[..., 0] <= self.discrete_resolution / 2 + epsilon) & (diff[..., 1] <= self.discrete_resolution / 2 + epsilon)
         in_cell = in_cell.any(dim = -1) # Collapse to [B, N_cells]
         # print("In cell:", in_cell, "shape:", in_cell.shape, "Discrete explore shape:", self.discrete_cell_explored.shape)
         # If any agent is in the cell, mark as explored
