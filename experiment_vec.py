@@ -105,6 +105,7 @@ def train_PPO_sweep(scenario,
                     ):
     
     ### HYPERPARAMS ###
+    torch.set_num_threads()
     is_fork = multiprocessing.get_start_method() == "fork"
     device = (
         torch.device(0)
@@ -387,6 +388,7 @@ def train_PPO(scenario,
               ):
     
     ### HYPERPARAMS ###
+    torch.set_num_threads()
     is_fork = multiprocessing.get_start_method() == "fork"
     device = (
         torch.device(0)
@@ -466,7 +468,7 @@ def train_PPO(scenario,
         # print("input_spec:\n", env.input_spec)
         # print("action_spec (as defined by input_spec):\n", env.action_spec)
 
-        # check_env_specs(env)
+        check_env_specs(env, return_contiguous=False)
 
         rollout = env.rollout(3, return_contiguous=False)
         print("rollout of three steps:", rollout)
