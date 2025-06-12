@@ -402,7 +402,7 @@ class Scenario(BaseScenario):
                     # print("COMPLETED TASKS\nTask state pos:", task.state.pos)
                     # print("Completed tasks:", self.completed_tasks)
                     # print("Completed tasks[:,i]:", self.completed_tasks[:, i])
-                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[i]
+                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[0].clone()
                 
                 # == SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY) ==
                     # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds

@@ -29,7 +29,7 @@ if __name__ == "__main__":
             "num_epochs": {"min": 4, "max": 32},
             "clip_epsilon": {"values": [0.2]},
             "gamma": {"min": 0.9, "max": 0.99},
-            "lmda": {"min": 0.8, "max": 0.95},
+            "lmbda": {"min": 0.8, "max": 0.95},
             "entropy_eps": {"min": 0.001, "max": 0.1},
         }
     }
