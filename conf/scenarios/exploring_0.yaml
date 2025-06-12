@@ -3,7 +3,7 @@ max_n_agents_holonomic: 3
 max_n_agents_diff_drive: 0
 max_n_agents_car: 0
 
-max_n_tasks: 8
+max_n_tasks: 10
 max_n_obstacles: 10
 
 agent_radius: 0.03
