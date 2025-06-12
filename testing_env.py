@@ -25,7 +25,7 @@ if __name__ == "__main__":
     env.render = True
 
     # act = [torch.stack([torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], device="cuda")]) for _ in range(8)]
-    actions = torch.tensor([0.01, 0.01, 0.01, 0.01, 0.01], device="cuda")
+    actions = torch.tensor([0.0001, 0.0001, 0.0001, 0.0001, 0.0001], device="cuda")
     actions = torch.stack([actions for _ in range(3)]) # stack for robots
     actions[0][0] = 1.0
     actions[1][1] = 1.0

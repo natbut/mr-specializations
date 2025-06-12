@@ -74,8 +74,8 @@ class PlanningAgent(Agent):
                                  heuristic_weights, 
                                  heuristic_eval_fns, 
                                  rewire=False,
-                                 horizon=0.25, 
-                                 max_pts=10,
+                                 horizon=0.5, 
+                                 max_pts=50,
                                  random_sampling=True,
                                  verbose=False):
 
@@ -102,7 +102,10 @@ class PlanningAgent(Agent):
         angles = torch.linspace(0.0, 2 * torch.pi, steps=max_pts)
         samp_dist_x = horizon * torch.cos(angles)
         samp_dist_y = horizon * torch.sin(angles)
-        while num_samps < max_pts:
+        
+        # print("Samp dist x:", samp_dist_x)
+        # print("Samp dist y:", samp_dist_y)
+        while num_samps < max_pts-1:
             # st_start = time.time()
             # Sample point within traj horizon
             if random_sampling:
@@ -111,25 +114,34 @@ class PlanningAgent(Agent):
                 # Uniformly sample points around current position
                 pos_x = current_pos[world_idx][0] + samp_dist_x[num_samps]
                 pos_y = current_pos[world_idx][1] + samp_dist_y[num_samps]
+                # print(f"Sampled pt: {samp_dist_x[num_samps], samp_dist_y[num_samps]}")
                 samp_pos = torch.tensor([pos_x, pos_y], dtype = current_pos.dtype, device=current_pos.device)
 
-            if verbose: print(f"Sampled pt: {samp_pos}")
+            if verbose: 
+                print(f"Sampled pt: {samp_pos}")
             num_samps += 1
             # print(f"\t\t Positon sample time: {time.time() - st_start} s")
             # st_start = time.time()
 
             # If point is in obstacle, continue
-            if not self._obstacle_free_check(world_idx, samp_pos):
-                if verbose: print("Pt in obstacle")
-                continue
+            # if not self._obstacle_free_check(world_idx, samp_pos):
+            #     if verbose: print("Pt in obstacle")
+            #     continue
             
             # print(f"\t\t Obstacle check time: {time.time() - st_start} s")
             # st_start = time.time()
 
             # Find nearest point in search tree & compute cost
             idx_nearest = self._find_nearest_node(V, samp_pos)
-            candidate_pos = V[idx_nearest] * (1 - alpha[1]) + samp_pos * alpha[1]
-            # Probably need to have an additional obstacle check here
+            # Compute candidate_pos as a uniform step towards samp_pos from V[idx_nearest]
+            direction = samp_pos - V[idx_nearest]
+            step_size = 2*self.shape.radius
+            norm = torch.norm(direction)
+            if norm > step_size:
+                candidate_pos = V[idx_nearest] + direction / norm * step_size
+            else:
+                candidate_pos = samp_pos
+            # Probably need to have an obstacle check here
             if not self._is_path_obstacle_free(V[idx_nearest], candidate_pos, world_idx, num_checks=4):
                 continue
             cost_new = costs[idx_nearest] + torch.norm(candidate_pos - V[idx_nearest])
@@ -139,7 +151,7 @@ class PlanningAgent(Agent):
             # print(f"\t\t Nearest node time: {time.time() - st_start} s")
             # st_start = time.time()
 
-            if rewire: # TODO Update rewire step if going to use this
+            if rewire: # TODO Update rewire step if going to use
                 # Find neighbors & best neighbor
                 idx_best, neighbors = self._find_neighbors(V, samp_pos, costs, rad)
 
@@ -163,30 +175,64 @@ class PlanningAgent(Agent):
         # print(f"\tSampling pts took {time.time() - t_start} s")
         # t_start = time.time()
 
-        # Extract path: find leaf node with best heuristic value
-        vals = []
-        for i, v in enumerate(V):
-            # Skip if vertex is a parent of another vertex (only eval leaf nodes)
-            if i in parents.values():
-                continue
+        # # Extract path: find highest-value path
+        # vals = []
+        # for i, v in enumerate(V):
+        #     # Skip if vertex is a parent of another vertex (only eval leaf nodes)
+        #     if i in parents.values():
+        #         continue
+        #     val = 0
+        #     for i, fn in enumerate(heuristic_eval_fns):
+        #         fn_out = heuristic_weights[world_idx][i] * fn(self.obs, world_idx, v)
+        #         val += fn_out
+        #         if verbose: print(f"Heuristic eval for {fn} at pt {v} with w {heuristic_weights[world_idx]}: {fn_out}")
+        #     vals.append(val)
+        # # print("Vals:", vals)
+        # goal_idx = int(torch.argmin(torch.stack(vals)))
+        # if verbose: print(f"Goal idx:{goal_idx}")
+
+        # # Backtrack to root to get trajectory
+        # traj = []
+        # idx = goal_idx
+        # while idx is not None:
+        #     traj.append(V[idx])
+        #     idx = parents[idx]
+        # traj = traj[::-1]
+        # if verbose: print(f"Backtracked traj: {traj}")
+
+        # Extract path: find the branch with the min average value
+        # Compute heuristic value for each node
+        node_vals = []
+        for v in V:
             val = 0
             for i, fn in enumerate(heuristic_eval_fns):
                 fn_out = heuristic_weights[world_idx][i] * fn(self.obs, world_idx, v)
                 val += fn_out
-                if verbose: print(f"Heuristic eval for {fn} at pt {v} with w {heuristic_weights[world_idx]}: {fn_out}")
-            vals.append(val)
-        # print("Vals:", vals)
-        goal_idx = int(torch.argmin(torch.stack(vals)))
-        if verbose: print(f"Goal idx:{goal_idx}")
+            node_vals.append(val)
 
-        # Backtrack to root to get trajectory
-        traj = []
-        idx = goal_idx
-        while idx is not None:
-            traj.append(V[idx])
-            idx = parents[idx]
-        traj = traj[::-1]
-        if verbose: print(f"Backtracked traj: {traj}")
+        # For each leaf node, backtrack to root and sum values along the path
+        leaf_indices = [i for i in range(len(V)) if i not in parents.values()]
+        best_val = None
+        best_path = None
+
+        # Find path with min average value over nodes in path
+        for leaf_idx in leaf_indices:
+            path = []
+            idx = leaf_idx
+            cum_val = 0
+            while idx is not None:
+                path.append(idx)
+                cum_val += node_vals[idx]
+                idx = parents[idx]
+            path = path[::-1]
+            avg_val = cum_val / len(path)
+            if (best_val is None) or (avg_val < best_val):
+                best_val = avg_val
+                best_path = path
+
+        # Build trajectory from best path
+        traj = [V[idx] for idx in best_path]
+        if verbose: print(f"Backtracked traj (max cumulative value): {traj}")
 
         # print(f"\tHeuristic eval & backtrack path took {time.time() - t_start} s")
         
@@ -207,8 +253,15 @@ class PlanningAgent(Agent):
         of any obstacles in agent's observations
         """
         # print("Agent obstacles:\n", self.obs["obs_obstacles"])
-        obstacles_pos = self.obs["obs_base"][world_idx] + self.obs["obs_obstacles"][world_idx]
-        if verbose: print("world", world_idx, "obstacle locs:\n", obstacles_pos)
+        # obstacles_pos = self.obs["obs_base"][world_idx] + self.obs["obs_obstacles"][world_idx]
+        # Concatenate obs_base position to the list of obstacle positions
+        obstacles_pos = torch.cat([
+            self.obs["obs_obstacles"][world_idx],
+            self.obs["obs_base"][world_idx].unsqueeze(0)
+        ], dim=0)
+        if verbose: 
+            print("Obs base:", self.obs["obs_base"][world_idx])
+            print("world", world_idx, "obstacle locs:\n", obstacles_pos)
 
         clearances = torch.norm(obstacles_pos - pos, dim=1) >= buffer
         if verbose:  print("Clearances:", clearances)
