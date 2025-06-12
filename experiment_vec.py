@@ -104,7 +104,6 @@ def train_PPO_sweep(scenario,
                     sweep_configs,
                     ):
     
-    
     ### HYPERPARAMS ###
     is_fork = multiprocessing.get_start_method() == "fork"
     device = (
@@ -114,18 +113,18 @@ def train_PPO_sweep(scenario,
     )
 
     # SET UP DATA LOGS #
-    scen_name = scenario_configs.split('/')[-1].split('.')[0]
-    env_name = env_configs.split('/')[-1].split('.')[0]
-    model_name = model_configs.split('/')[-1].split('.')[0]
+    scen_name = scenario_configs[0].split('/')[-1].split('.')[0]
+    env_name = env_configs[0].split('/')[-1].split('.')[0]
+    model_name = model_configs[0].split('/')[-1].split('.')[0]
     file_name = f"{scen_name}_{env_name}_{model_name}"
-    test_name = f"{sweep_configs.keys().join('_')}"
+    test_name = "_".join(list(sweep_configs.keys()))
     test_folder_path = os.path.join("runs", file_name, test_name)
     os.makedirs(os.path.dirname(test_folder_path), exist_ok=True)
 
     # LOAD CONFIGS #
-    scenario_config = load_yaml_to_kwargs(scenario_configs)
-    env_config = load_yaml_to_kwargs(env_configs)
-    model_config = load_yaml_to_kwargs(model_configs)
+    scenario_config = load_yaml_to_kwargs(scenario_configs[0])
+    env_config = load_yaml_to_kwargs(env_configs[0])
+    model_config = load_yaml_to_kwargs(model_configs[0])
 
     # PPO PARAMS #
     lr = sweep_configs.lr
