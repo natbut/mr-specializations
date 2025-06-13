@@ -58,7 +58,8 @@ def sweep_PPO(scenario,
               model_configs,
               sweep_configs,
               project_name=None,
-              entity=None
+              entity=None,
+              conf_name=None
               ):
 
     sweep_id = wandb.sweep(sweep=sweep_configs,
@@ -73,7 +74,8 @@ def sweep_PPO(scenario,
                     env_configs,
                     model_configs,
                     project_name,
-                    entity
+                    entity,
+                    conf_name,
                 ),
                 count=10
                 )
@@ -84,10 +86,12 @@ def main(scenario,
          model_configs,
          project_name,
          entity,
+         conf_name,
          ):
     
     wandb.init(entity=entity,
-               project=project_name+"-sweep"
+               project=project_name+"-sweep",
+               name=conf_name
                )
     train_PPO_sweep(scenario,
                     scenario_configs,
