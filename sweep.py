@@ -48,7 +48,8 @@ if __name__ == "__main__":
                 model_configs,
                 sweep_configs,
                 project_name="mothership-complex",
-                entity="nlbutler18-oregon-state-university"
+                entity="nlbutler18-oregon-state-university",
+                conf_name=sweep_fp.split('/')[-1].split('.')[0]
                 )
 
 
