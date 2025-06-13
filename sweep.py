@@ -2,7 +2,7 @@
 # from envs.scenarios.SR_tasks import Scenario
 from envs.scenarios.explore_comms_tasks import Scenario
 from experiment_vec import sweep_PPO
-
+import yaml
 
 if __name__ == "__main__":
 
@@ -16,33 +16,40 @@ if __name__ == "__main__":
     # Model Params
     model_configs = "conf/models/mat_8.yaml",
 
-    # Sweep Config (RL hyperparams)
-    sweep_configs = {
-        "method": "random",
-        "metric": {"goal": "maximize", "name": "train/mean_reward"},
-        "parameters": {
-            "lr": {"min": 0.0001, "max": 0.01},
-            "max_grad_norm": {"values": [1.0]},  # Use "value" to keep constant
-            "frames_per_batch": {"min": 512, "max": 4096},
-            "total_frames": {"values": [1000000]},
-            "sub_batch_size": {"min": 64, "max": 512},
-            "num_epochs": {"min": 4, "max": 32},
-            "clip_epsilon": {"values": [0.2]},
-            "gamma": {"min": 0.9, "max": 0.99},
-            "lmbda": {"min": 0.8, "max": 0.95},
-            "entropy_eps": {"min": 0.001, "max": 0.1},
+    # Sweep fp
+    sweep_fp = "conf/sweeps/lr.yaml"
+
+    with open(sweep_fp, 'r') as file:
+        sweep_params = yaml.safe_load(file)
+
+        # Sweep Config (RL hyperparams)
+        sweep_configs = {
+            "method": "grid",
+            "metric": {"goal": "maximize", "name": "train/mean_reward"},
+            "parameters": sweep_params
+            # {
+            #     "lr": {"values": [0.01, 0.001, 0.0001]},
+            #     "max_grad_norm": {"values": [1.0]},  # Use "value" to keep constant
+            #     "frames_per_batch": {[512, 2048, 4096]},
+            #     "total_frames": {"values": [1000000]},
+            #     "sub_batch_size": {"values": [64, 128, 256]},
+            #     "num_epochs": {"values": [4, 16, 32]},
+            #     "clip_epsilon": {"values": [0.2]},
+            #     "gamma": {"values": [0.99]},
+            #     "lmbda": {"values": [0.95]},
+            #     "entropy_eps": {"values": [0.01, 0.001, 0.0001]},
+            # }
         }
-    }
 
     
-    sweep_PPO(scenario, 
-            scenario_configs,
-            env_configs,
-            model_configs,
-            sweep_configs,
-            project_name="mothership-complex",
-            entity="nlbutler18-oregon-state-university"
-            )
+        sweep_PPO(scenario, 
+                scenario_configs,
+                env_configs,
+                model_configs,
+                sweep_configs,
+                project_name="mothership-complex",
+                entity="nlbutler18-oregon-state-university"
+                )
 
 
     # == Problem/Project Notes ==
