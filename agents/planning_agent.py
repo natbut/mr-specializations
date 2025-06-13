@@ -74,8 +74,8 @@ class PlanningAgent(Agent):
                                  heuristic_weights, 
                                  heuristic_eval_fns, 
                                  rewire=False,
-                                 horizon=0.5, 
-                                 max_pts=50,
+                                 horizon=0.25, 
+                                 max_pts=25,
                                  random_sampling=True,
                                  verbose=False):
 
@@ -200,7 +200,7 @@ class PlanningAgent(Agent):
         # traj = traj[::-1]
         # if verbose: print(f"Backtracked traj: {traj}")
 
-        # Extract path: find the branch with the min average value
+        # Extract path: find the branch with the min average cost
         # Compute heuristic value for each node
         node_vals = []
         for v in V:
@@ -215,7 +215,7 @@ class PlanningAgent(Agent):
         best_val = None
         best_path = None
 
-        # Find path with min average value over nodes in path
+        # Find path with min average cost over nodes in path
         for leaf_idx in leaf_indices:
             path = []
             idx = leaf_idx

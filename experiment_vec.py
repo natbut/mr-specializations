@@ -105,7 +105,7 @@ def train_PPO_sweep(scenario,
                     ):
     
     ### HYPERPARAMS ###
-    torch.set_num_threads()
+    torch.set_num_threads(1)
     is_fork = multiprocessing.get_start_method() == "fork"
     device = (
         torch.device(0)
@@ -388,7 +388,7 @@ def train_PPO(scenario,
               ):
     
     ### HYPERPARAMS ###
-    torch.set_num_threads()
+    torch.set_num_threads(1)
     is_fork = multiprocessing.get_start_method() == "fork"
     device = (
         torch.device(0)

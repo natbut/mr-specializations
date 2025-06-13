@@ -161,7 +161,8 @@ class EnvironmentTransformer(nn.Module):
         num_layers=2,
         dropout_rate=0.2,
         noise_std=0.1,
-        max_cells=100 # <-- IMPORTANT: match padding size
+        max_cells=100, # <-- IMPORTANT: match padding size
+        cell_pos_as_features=True
     ):
         super().__init__()
         self.d_model = d_model
@@ -169,9 +170,13 @@ class EnvironmentTransformer(nn.Module):
         self.max_robots = max_robots
         self.noise_std = noise_std
         self.max_cells = max_cells
+        self.cell_pos_as_features = cell_pos_as_features
 
         # Embeddings
-        self.feature_embed = nn.Linear(num_features, d_model)
+        if self.cell_pos_as_features:
+            self.feature_embed = nn.Linear(num_features+2, d_model)
+        else:
+            self.feature_embed = nn.Linear(num_features, d_model)
         self.pos_embed = PositionalEncoding(d_model)
         self.agent_embed = nn.Embedding(max_robots, d_model)
 
@@ -221,9 +226,14 @@ class EnvironmentTransformer(nn.Module):
         # TODO evaluate mask
 
         # === Encoder input ===
-        x_feat = self.feature_embed(cell_features)
-        x_pos = self.pos_embed(cell_positions) # Use the linear embedding for positions
-        x = x_feat + x_pos
+        if self.cell_pos_as_features:
+            cell_feats_with_pos = torch.cat([cell_features, cell_positions], dim=-1)
+            x_feat = self.feature_embed(cell_feats_with_pos)
+            x = x_feat
+        else:
+            x_feat = self.feature_embed(cell_features)
+            x_pos = self.pos_embed(cell_positions) # Use the linear embedding for positions
+            x = x_feat + x_pos
 
         # Pass the mask to the encoder
         enc_out = self.encoder(x, src_key_padding_mask=mask)
@@ -290,7 +300,7 @@ class EnvironmentTransformer(nn.Module):
         h_loc, h_scale = self.norm_extractor(vals)
 
         if self.calls % 1000 == 0:
-            print(f"Sample positional enc at call {self.calls}:\n", x_pos)
+            # print(f"Sample positional enc at call {self.calls}:\n", x_pos)
             print(f"Sample encoder out at call {self.calls}:\n", enc_out)
             print(f"Sample decoder out at call {self.calls}:\n", vals)
             print(f"Sample h_weights loc at call {self.calls}:\n", h_loc)

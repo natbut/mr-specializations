@@ -13,7 +13,7 @@ world_spawning_y: 1
 
 comms_rendering_range: 0
 
-tasks_respawn_rate: 0.001
+tasks_respawn_rate: 0.00025
 task_comp_range: 0.1
 
 min_distance_between_entities: 0.05
