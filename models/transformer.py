@@ -235,6 +235,9 @@ class EnvironmentTransformer(nn.Module):
             x_pos = self.pos_embed(cell_positions) # Use the linear embedding for positions
             x = x_feat + x_pos
 
+        # print("\nSampled Features:", cell_feats_with_pos[0][:5])
+        # print("Features to encoder:", x[0][:4])
+        # print("Sampled mask:", mask[0][:5])
         # Pass the mask to the encoder
         enc_out = self.encoder(x, src_key_padding_mask=mask)
 

@@ -4,7 +4,7 @@ lr:
 max_grad_norm:
   values: [1.0] 
 frames_per_batch:
-  values: [1024]
+  values: [2048]
 total_frames:
   values: [500000]
 sub_batch_size:

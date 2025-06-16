@@ -726,6 +726,8 @@ class Scenario(BaseScenario):
                                                      padding=0.0, 
                                                      output_size=(self.world.batch_dim, 100, 2))
         
+        # print("\nCell features sample:", cell_features[0][:4])
+        
         global_obs = {
             "cell_feats": cell_features, # torch.nested.to_padded_tensor(cell_features, padding=0.0),
 
@@ -802,7 +804,6 @@ class Scenario(BaseScenario):
                         pt_circle.add_attr(xform)
                         pt_circle.set_color(*agent.color)
                         geoms.append(pt_circle)
-
 
         # Plot communication lines
         if self.comms_rendering_range > 0:

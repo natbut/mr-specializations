@@ -20,7 +20,7 @@ def nearest_task(agent_obs, world_idx, sampled_pos):
     # print("MASK:", mask)
     tasks = tasks[mask]
     # print("NEW TASKS:", tasks)
-    return min_dist(tasks, sampled_pos)
+    return min_dist(tasks, sampled_pos.unsqueeze(0))
 
 def nearest_agent(agent_obs, world_idx, sampled_pos):
     """
@@ -40,7 +40,7 @@ def nearest_agent(agent_obs, world_idx, sampled_pos):
     # print("AGENTS:", agents, "\n CURRENT POS:", sampled_pos, "\nMASK:", mask)
     # agents = agents[mask]
     # print("AGENTS AFTER MASK:", agents)
-    return min_dist(agents, sampled_pos)
+    return min_dist(agents, sampled_pos.unsqueeze(0))
 
 def nearest_frontier(agent_obs, world_idx, sampled_pos):
     """
@@ -60,7 +60,7 @@ def nearest_frontier(agent_obs, world_idx, sampled_pos):
     frontiers = agent_obs["obs_frontiers"][world_idx] # Gets frontiers for corresponding world
     # print(f"World {world_idx} frontiers: {frontiers}, \n Current Pos: {sampled_pos}, \nMin dist: {min_dist(frontiers, sampled_pos)}")
     # print("Frontiers min dist:", min_dist(frontiers, sampled_pos))
-    return min_dist(frontiers, sampled_pos)
+    return min_dist(frontiers, sampled_pos.unsqueeze(0))
 
 def nearest_comms_midpt(agent_obs, world_idx, sampled_pos):
     """
@@ -88,9 +88,10 @@ def nearest_comms_midpt(agent_obs, world_idx, sampled_pos):
         comms_midpt = torch.cat((comms_midpt, agents_midpt), dim=0)
 
     # print("Comms midpt:", comms_midpt)
+    # print("Sampled pos:", sampled_pos.unsqueeze(0))
     # print("Min dist:", min_dist(comms_midpt, sampled_pos))
 
-    return min_dist(comms_midpt, sampled_pos)
+    return min_dist(comms_midpt, sampled_pos.unsqueeze(0))
 
 def goto_base(agent_obs, world_idx, sampled_pos):
     """
@@ -106,11 +107,14 @@ def goto_base(agent_obs, world_idx, sampled_pos):
     base = agent_obs["obs_base"][world_idx] # Gets base pos for corresponding world
     # print("Base pos:", base)
     # print("Sampled pos:", sampled_pos)
-    # print("Dist to base:", torch.norm(base - sampled_pos, dim=0))
-    return torch.norm(base - sampled_pos, dim=0)
+    # print("Norm dist to base:", torch.norm(base - sampled_pos, dim=0))
+    # print("CDist dist to base:", torch.cdist(base.unsqueeze(0), sampled_pos.unsqueeze(0)))
+
+    return torch.cdist(base.unsqueeze(0), sampled_pos.unsqueeze(0)).item() #torch.norm(base - sampled_pos, dim=0)
 
 
 def min_dist(points_a, points_b):
     if len(points_a) == 0 or len(points_b) == 0:
         return 0.0
-    return torch.min(torch.norm(points_a - points_b, dim=1))
+    
+    return torch.min(torch.cdist(points_a, points_b))
