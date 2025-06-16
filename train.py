@@ -4,7 +4,7 @@ import pstats
 # from experiment import train_PPO
 # from envs.scenarios.SR_tasks import Scenario
 from envs.scenarios.explore_comms_tasks import Scenario
-from experiment_vec import train_PPO
+from experiment_vec import train
 
 with cProfile.Profile() as pr:
 
@@ -18,26 +18,25 @@ with cProfile.Profile() as pr:
             "conf/scenarios/exploring_0.yaml", #SR_tasks_5.yaml",
         ]
         env_configs = [
-            "conf/envs/planning_env_explore.yaml", #planning_env_vec_4.yaml",
+            "conf/envs/planning_env_explore_1.yaml", #planning_env_vec_4.yaml",
         ]
 
         # RL Hyperparams
         rl_configs = [
-            "conf/algos/ppo_1.yaml",
+            "conf/algos/ppo_4_0.yaml",
         ]
 
         # Model Params
         model_configs = [
-            "conf/models/mat_8.yaml",
+            "conf/models/mat_9.yaml",
         ]
 
-        
-        train_PPO(scenario, 
+        train(scenario, 
                 scenario_configs,
                 env_configs,
                 rl_configs,
                 model_configs,
-                use_wandb=False,
+                wandb_mode="TRAIN", #None, #"TRAIN"
                 project_name="mothership-complex"
                 )
         

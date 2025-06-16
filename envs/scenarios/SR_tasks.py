@@ -111,6 +111,8 @@ class Scenario(BaseScenario):
             0.005  # Minimum distance between entities for collision trigger
         )
 
+        self.num_feats = self.n_tasks + self.n_agents + self.n_obstacles
+
         ScenarioUtils.check_kwargs_consumed(kwargs) # Warn is not all kwargs have been consumed
 
 
