@@ -478,30 +478,31 @@ def train_PPO(scenario,
                     wandb.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})
                     wandb.log({"eval/cum_reward": eval_rollout["next", "reward"].sum().item()})
                     wandb.log({"eval/step_count": eval_rollout["step_count"].max().item()})
+                    wandb.log({f"eval/env0_rob{j}_action{i}": eval_rollout["action"][0, j, i] for i in range(num_heuristics) for j in range(base_env.sim_env.n_agents)})
 
                 del eval_rollout
             env.base_env.render = False
 
         # Save checkpoints & best-performing models, including environment state
-            if data["next", "reward"].mean().item() > best_reward or i % 5 == 0:
-                checkpt_data = {
-                    'step': i,
-                    'actor_state_dict': tf_act.state_dict(),
-                    'critic_state_dict': tf_crit.state_dict(),
-                    'optimizer_state_dict': optim.state_dict(),
-                    'scheduler_state_dict': scheduler.state_dict(),
-                    'logs': logs,
-                    'env_state_dict': env.state_dict() if hasattr(env, "state_dict") else None,
-                    }
-                checkpoint_name = f"checkpt_{i}.pt"
+        if data["next", "reward"].mean().item() > best_reward or i % 5 == 0:
+            checkpt_data = {
+                'step': i,
+                'actor_state_dict': tf_act.state_dict(),
+                'critic_state_dict': tf_crit.state_dict(),
+                'optimizer_state_dict': optim.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'logs': logs,
+                'env_state_dict': env.state_dict() if hasattr(env, "state_dict") else None,
+                }
+            checkpoint_name = f"checkpt_{i}.pt"
+            checkpoint_path = os.path.join(f"{test_folder_path}/checkpoints/", checkpoint_name)
+            save_checkpt(checkpoint_path, checkpt_data)
+
+            if data["next", "reward"].mean().item() > best_reward:
+                best_reward = data["next", "reward"].mean().item()
+                checkpoint_name = f"best.pt"
                 checkpoint_path = os.path.join(f"{test_folder_path}/checkpoints/", checkpoint_name)
                 save_checkpt(checkpoint_path, checkpt_data)
-
-                if data["next", "reward"].mean().item() > best_reward:
-                    best_reward = data["next", "reward"].mean().item()
-                    checkpoint_name = f"best.pt"
-                    checkpoint_path = os.path.join(f"{test_folder_path}/checkpoints/", checkpoint_name)
-                    save_checkpt(checkpoint_path, checkpt_data)
             
         pbar.set_description(", ".join([eval_str, cum_reward_str, lr_str])) #stepcount_str,
 
