@@ -379,7 +379,7 @@ def train_PPO(scenario,
             
             # Initial batch data prep for vectorized environment
             data = tensordict_data.flatten(0,1) # Flatten trajectory to fix batching from collector
-            data["sample_log_prob"] = data["sample_log_prob"].sum(dim=-1).unsqueeze(-1) # Sum log prob for each agent
+            data["sample_log_prob"] = data["sample_log_prob"].sum(dim=-1)#.unsqueeze(-1) # Sum log prob for each agent
 
             # We re-compute advantage at each epoch as its value depends on the value
             # network which is updated in the inner loop.
@@ -479,24 +479,30 @@ def train_PPO(scenario,
                     wandb.log({"eval/cum_reward": eval_rollout["next", "reward"].sum().item()})
                     wandb.log({"eval/step_count": eval_rollout["step_count"].max().item()})
 
-                # Save best models
-                if eval_rollout["next", "reward"].mean().item() > best_reward:
-                    best_reward = eval_rollout["next", "reward"].mean().item()
-                    checkpoint_name = f"best.pt"
-                    checkpoint_path = os.path.join(f"{test_folder_path}/checkpoints/", checkpoint_name)
-                    os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
-                    torch.save({
-                        'step': i,
-                        'actor_state_dict': tf_act.state_dict(),
-                        'critic_state_dict': tf_crit.state_dict(),
-                        'optimizer_state_dict': optim.state_dict(),
-                        'scheduler_state_dict': scheduler.state_dict(),
-                        'logs': logs,
-                    }, checkpoint_path)
-
                 del eval_rollout
             env.base_env.render = False
 
+        # Save checkpoints & best-performing models, including environment state
+            if data["next", "reward"].mean().item() > best_reward or i % 5 == 0:
+                checkpt_data = {
+                    'step': i,
+                    'actor_state_dict': tf_act.state_dict(),
+                    'critic_state_dict': tf_crit.state_dict(),
+                    'optimizer_state_dict': optim.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'logs': logs,
+                    'env_state_dict': env.state_dict() if hasattr(env, "state_dict") else None,
+                    }
+                checkpoint_name = f"checkpt_{i}.pt"
+                checkpoint_path = os.path.join(f"{test_folder_path}/checkpoints/", checkpoint_name)
+                save_checkpt(checkpoint_path, checkpt_data)
+
+                if data["next", "reward"].mean().item() > best_reward:
+                    best_reward = data["next", "reward"].mean().item()
+                    checkpoint_name = f"best.pt"
+                    checkpoint_path = os.path.join(f"{test_folder_path}/checkpoints/", checkpoint_name)
+                    save_checkpt(checkpoint_path, checkpt_data)
+            
         pbar.set_description(", ".join([eval_str, cum_reward_str, lr_str])) #stepcount_str,
 
         # We're also using a learning rate scheduler. Like the gradient clipping,
@@ -505,3 +511,8 @@ def train_PPO(scenario,
 
     if wandb_mode == "TRAIN":
         run.finish()    
+
+
+def save_checkpt(checkpt_path, checkpt_data):
+    os.makedirs(os.path.dirname(checkpt_path), exist_ok=True)
+    torch.save(checkpt_data, checkpt_path)
