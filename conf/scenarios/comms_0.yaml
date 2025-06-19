@@ -1,0 +1,27 @@
+
+max_n_agents_holonomic: 3
+max_n_agents_diff_drive: 0
+max_n_agents_car: 0
+
+max_n_tasks: 10
+max_n_obstacles: 10
+
+agent_radius: 0.03
+
+world_spawning_x: 1
+world_spawning_y: 1
+
+comms_rendering_range: 0
+
+tasks_respawn_rate: 0.00025
+task_comp_range: 0.1
+
+min_distance_between_entities: 0.05
+
+task_reward: 0.1
+time_penalty: -0.0001
+shared_rew: False
+
+comms_rew_decay_max: 0.5 # max range
+comms_rew_decay_drop: 10 # rate of decrease up to max range (8-15ish range)
+

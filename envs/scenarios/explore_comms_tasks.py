@@ -98,10 +98,20 @@ class Scenario(BaseScenario):
             "discrete_resolution", 0.2)
         
         self.num_feats = kwargs.pop(
-            "num_feats", 5) # TODO compute dynamically?
+            "num_feats", 5
+            ) # TODO compute
         
         self.min_distance_between_entities = kwargs.pop(
-            "min_distance_between_entities", 0.05) # Minimum distance between entities at spawning time
+            "min_distance_between_entities", 0.05
+            ) # Minimum distance between entities at spawning time
+        
+        self.comms_rew_decay_drop = kwargs.pop(
+            "comms_rew_decay_drop", None #10.0
+        )
+        self.comms_rew_decay_max = kwargs.pop(
+            "comms_rew_decay_max", None #0.5
+        )
+        
         self.min_collision_distance = (
             0.005  # Minimum distance between entities for collision trigger
         )
@@ -623,7 +633,7 @@ class Scenario(BaseScenario):
         return masked_frontiers
 
     
-    def agent_tasks_reward(self, agent):
+    def agent_tasks_reward(self, agent: Agent):
         """Reward for covering targets"""
         agent_index = self.world.agents.index(agent)
 
@@ -637,7 +647,65 @@ class Scenario(BaseScenario):
         agent.tasks_rew += (
             num_covered_targets_covered_by_agent * self.complete_task_coeff
         )
+        
+        if self.comms_rew_decay_drop is not None and agent.tasks_rew.any() != 0.0:
+            decay = self._get_reward_decay(agent)
+            agent.tasks_rew *= decay
+            # print("Decayed rew:", agent.tasks_rew)
         return agent.tasks_rew
+            
+    def _get_reward_decay(self, agent: Agent):
+        # Decay reward value using multi-hop comms distance
+        max_min_dists = torch.zeros((self.world.batch_dim,1), dtype=agent.state.pos.dtype, device=agent.state.pos.device)
+        cur_pos = agent.state.pos.clone().unsqueeze(1)
+        visited_pos = agent.state.pos.clone().unsqueeze(1)
+        base_pos = self.base.state.pos.unsqueeze(1)
+        agents_pos = torch.stack(
+            [a.state.pos for a in self.world.agents if a.name != agent.name],
+            dim=1
+        )
+        agents_pos = torch.cat((agents_pos, base_pos), dim=1)
+        num_pts = agents_pos.shape[1]
+        
+        while not torch.allclose(cur_pos, base_pos):
+            # Get distance to nearest agents
+            dists = torch.norm(cur_pos - agents_pos, dim=2)
+            nearest_pos_idx = torch.argmin(dists, dim=1)
+            min_dists = torch.min(dists, dim=1).values.unsqueeze(-1)
+            
+            # Track already-visited positions & update current position
+            visited_pos = torch.cat((visited_pos, cur_pos), dim=1)
+            cur_pos = agents_pos[torch.arange(agents_pos.shape[0]), nearest_pos_idx].unsqueeze(1)
+            # print(f"Updated visited pos: {visited_pos}\n New cur pos: {cur_pos}")
+            # print(f"New max min dists: {max_min_dists}")
+
+            # Remove the current position from agents_pos for the next iteration, but do not remove entries that are at base_pos
+            mask = ~torch.all(torch.isclose(agents_pos, cur_pos), dim=-1)
+            # Filter agents_pos batch-wise to avoid shape errors
+            filtered_agents_pos = []
+            for b in range(agents_pos.shape[0]):
+                filtered = agents_pos[b][mask[b]]
+                while filtered.shape[0] < num_pts:
+                    filtered = torch.cat((filtered, base_pos[b]), dim=0)
+                filtered_agents_pos.append(filtered)
+            agents_pos = torch.stack(filtered_agents_pos, dim=0)
+            # print(f"New agents pos: {agents_pos}\nbase_pos: {base_pos}")
+            
+            max_min_dists = torch.where(min_dists > max_min_dists, min_dists, max_min_dists)
+        
+        # Compute decay
+        # print("Tasks rew shape", agent.tasks_rew.shape)
+        # print("comp1:", self.comms_rew_decay_drop*max_min_dists.squeeze())
+        # print("comp2:", self.comms_rew_decay_drop*torch.full(agent.tasks_rew.shape, self.comms_rew_decay_max, device=agent.device))
+        exponent = self.comms_rew_decay_drop*max_min_dists.squeeze() - self.comms_rew_decay_drop*torch.full(agent.tasks_rew.shape, self.comms_rew_decay_max, device=agent.device)
+        # print("Exponent:", exponent)
+        decay = torch.exp(exponent)
+        # print("Decay:", decay)
+        offset = torch.ones(agent.tasks_rew.shape, device=agent.device) - decay
+        # print("With offset,", offset)
+            
+        return torch.clip(offset, min=0.0)
+        
 
     def observation(self, agent: Agent):
         # Global observation for learner and local agent observation for planner
