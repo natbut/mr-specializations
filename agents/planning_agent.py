@@ -1,8 +1,9 @@
+import time
 from typing import Union
 
 import torch
 from vmas.simulator.core import *
-import time
+
 
 class PlanningAgent(Agent):
     
@@ -51,6 +52,7 @@ class PlanningAgent(Agent):
         self.trajs = []
         self.traj_idx = []
         self.sim_velocity = sim_velocity
+        self.is_active = True
         
         self.control_action_dict = {str([0.0,0.0]) : 0,
                         str([0.0,-1.0]): 1,
@@ -267,6 +269,9 @@ class PlanningAgent(Agent):
         Sampling-based search within radius defined by horizon. Observations from environment should
         allow us to evaluate value of each sampled point towards each heuristic.
         """
+        
+        if not self.is_active:
+            return self.null_action
 
         current_pos = self.state.pos
         if verbose: print(f"Agent {self.name} heuristic weights:\n {heuristic_weights}")
@@ -327,6 +332,8 @@ class PlanningAgent(Agent):
 
         return u_action
     
+
+    # ====== OLD FROM GRAPH-BASED NAV ======
 
 
     def _compute_dist_heuristics_val(self, cur_node_pos, node_pos, node_features, heuristic_weights, verbose = False):

@@ -50,6 +50,7 @@ if __name__ == "__main__":
             project_name=project_name
             )
     
+    # python train.py "conf/scenarios/comms_0.yaml" "conf/envs/planning_env_explore_1.yaml" "conf/algos/ppo_4_0.yaml" "conf/models/mat_2_0.yaml" "TRAIN" "mothership-complex"
     
     # stats = pstats.Stats(pr)
     # stats.sort_stats(pstats.SortKey.TIME)
