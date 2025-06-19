@@ -1,11 +1,13 @@
 
-max_n_agents_holonomic: 3
+max_n_agents_holonomic: 5
 max_n_agents_diff_drive: 0
 max_n_agents_car: 0
 
 max_n_tasks: 10
 max_n_obstacles: 10
 num_feats: 6
+
+variable_team_size: True
 
 agent_radius: 0.03
 

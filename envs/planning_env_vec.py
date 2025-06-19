@@ -136,6 +136,11 @@ class VMASPlanningEnv(EnvBase):
                         dtype=torch.float64,
                         device=device
                     ),
+                    num_robs=Unbounded(
+                        shape=(self.num_envs,),
+                        dtype=torch.float32,
+                        device=device
+                    ),
                 #     device=device
                 # ),
                 shape=(self.num_envs,),
@@ -194,6 +199,7 @@ class VMASPlanningEnv(EnvBase):
         if self.render:
             print(f"\nHeuristic Weights:\n {heuristic_weights} Shape: {heuristic_weights.shape}") # [B, N_AGENTS, N_FEATS]
         # print("WEIGHTS:", heuristic_weights, "shape:", heuristic_weights.shape)
+        # print("AGENTS:", self.sim_env.scenario.agents, "shape:", len(self.sim_env.agents))
 
         # Execute and aggregate rewards
         rewards = torch.zeros((self.num_envs, 1), device=self.device)
@@ -204,17 +210,20 @@ class VMASPlanningEnv(EnvBase):
             agent.trajs = []
         # print("\n= Pre-rollout step! =")
         self.steps += 1
+        # print("Active agents:", [a.is_active for a in self.sim_env.agents])
         for t in range(self.macro_step):
             verbose = False
             # Compute agent trajectories & get actions
             u_action = []
             # t_start = time.time()
-            for i, agent in enumerate(self.sim_env.agents):
-                u_action.append(agent.get_control_action_cont(heuristic_weights[:,i,:],
-                                                              self.heuristic_eval_fns,
-                                                              self.horizon,
-                                                              verbose
-                                                              )) # get next actions from agent controllers
+            i = 0
+            for agent in self.sim_env.agents:
+                if agent.is_active:
+                    u_action.append(agent.get_control_action_cont(heuristic_weights[:,i,:], self.heuristic_eval_fns, self.horizon, verbose
+                                                                )) # get next actions from agent controllers
+                    i += 1
+                else:
+                    u_action.append(agent.null_action)
             # print(f"Planing took {time.time() - t_start} s")
             # t_start = time.time()
             # print("U-ACTION:", u_action)

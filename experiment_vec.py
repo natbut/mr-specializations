@@ -301,7 +301,7 @@ def train_PPO(scenario,
 
     policy_module = TensorDictModule(
         tf_act,
-        in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"), ("rob_pos")],
+        in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"), ("rob_pos"), ("num_robs")],
         out_keys=["loc","scale"]
     )
 

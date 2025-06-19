@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tensordict.nn.distributions import NormalParamExtractor
-  
+
 # class PositionalEncoding(nn.Module):
 #     def __init__(self, d_model):
 #         super().__init__()
@@ -162,7 +162,8 @@ class EnvironmentTransformer(nn.Module):
         dropout_rate=0.2,
         noise_std=0.1,
         max_cells=100, # <-- IMPORTANT: match padding size
-        cell_pos_as_features=True
+        cell_pos_as_features=True,
+        agent_id_enc=False
     ):
         super().__init__()
         self.d_model = d_model
@@ -171,6 +172,7 @@ class EnvironmentTransformer(nn.Module):
         self.noise_std = noise_std
         self.max_cells = max_cells
         self.cell_pos_as_features = cell_pos_as_features
+        self.agent_id_enc = agent_id_enc
 
         # Embeddings
         if self.cell_pos_as_features:
@@ -178,7 +180,7 @@ class EnvironmentTransformer(nn.Module):
         else:
             self.feature_embed = nn.Linear(num_features, d_model)
         self.pos_embed = PositionalEncoding(d_model)
-        self.agent_embed = nn.Embedding(max_robots, d_model)
+        # self.agent_embed = nn.Embedding(max_robots, d_model)
 
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
@@ -206,7 +208,7 @@ class EnvironmentTransformer(nn.Module):
         self.calls = 0
 
     # cell_lengths should be a tensor (B,) or (B, 1) indicating the actual number of cells
-    def forward(self, cell_features, cell_positions, num_cells, robot_positions):
+    def forward(self, cell_features, cell_positions, num_cells, robot_positions, num_robots):
         unbatched = False
         if cell_features.dim() == 2:
             unbatched = True
@@ -216,18 +218,18 @@ class EnvironmentTransformer(nn.Module):
             num_cells = num_cells.unsqueeze(0) # Ensure cell_lengths is also batched
 
         B, N_padded, _ = cell_features.shape # N_padded is MAX_CELLS
-        R = robot_positions.size(1)
+        R, NR_padded, _ = robot_positions.shape  # NR_padded is max_n_agents
 
         # Create attention mask for padding
         # mask is (B, N_padded) boolean tensor, True where token should be ignored (padding)
         # N_padded is self.max_cells
         mask = torch.arange(N_padded, device=cell_features.device).expand(B, N_padded) >= num_cells.unsqueeze(1)
         # Transformer's `src_key_padding_mask` expects True for masked elements.
-        # TODO evaluate mask
 
         # === Encoder input ===
         if self.cell_pos_as_features:
             cell_feats_with_pos = torch.cat([cell_features, cell_positions], dim=-1)
+            # print("\nSampled Features:", cell_feats_with_pos[0][:5])
             x_feat = self.feature_embed(cell_feats_with_pos)
             x = x_feat
         else:
@@ -235,7 +237,6 @@ class EnvironmentTransformer(nn.Module):
             x_pos = self.pos_embed(cell_positions) # Use the linear embedding for positions
             x = x_feat + x_pos
 
-        # print("\nSampled Features:", cell_feats_with_pos[0][:5])
         # print("Features to encoder:", x[0][:4])
         # print("Sampled mask:", mask[0][:5])
         # Pass the mask to the encoder
@@ -258,8 +259,18 @@ class EnvironmentTransformer(nn.Module):
             # Option 1: Explicitly set distances to padded elements to infinity
             # This is more robust if you might have robots far from all real cells
             cell_pos_exp = cell_positions.unsqueeze(1) # [B, 1, N_padded, 2]
-            robot_pos_exp = robot_positions.unsqueeze(2) # [B, R, 1, 2]
-            dists = torch.norm(robot_pos_exp - cell_pos_exp, dim=-1) # [B, R, N_padded]
+            # robot_positions: [B, NR_padded, 2], num_robots: [B] or [B,1]
+            robot_pos_exp = robot_positions.unsqueeze(2) # [B, NR_padded, 1, 2]
+            # print("Robot pos exp:", robot_pos_exp)
+            # print("Num robots:", num_robots)
+
+            # Create robot mask: True where robot is padding (to be ignored)
+            robot_mask = torch.arange(NR_padded, device=robot_positions.device).expand(B, NR_padded) < num_robots.unsqueeze(1)
+            # print("robot_mask:", robot_mask)
+            unpadded_rob_pos = torch.stack([robot_pos_exp[b][robot_mask[b]] for b in range(B)])
+            # print("masked_robot_pos", unpadded_rob_pos)
+            dists = torch.norm(unpadded_rob_pos - cell_pos_exp, dim=-1) # [B, R, N_padded]
+            # print("Dists:", dists)
             
             # Apply a large value to distances corresponding to padding
             dists = dists.masked_fill(mask.unsqueeze(1), float('inf')) # [B, R, N_padded]
@@ -287,12 +298,14 @@ class EnvironmentTransformer(nn.Module):
 
         # === Add positional & agent-ID embeddings ===
         # robot_positions: [B, R, 2]
-        robot_pos_enc = self.pos_embed(robot_positions) # Use linear embedding
-        robot_tokens = robot_tokens + robot_pos_enc # No need for PE on sequence for R (fixed)
+        # print("robot positions shape:", robot_positions.shape, "unpadded positions shape:", unpadded_rob_pos.squeeze(dim=2).shape)
+        robot_pos_enc = self.pos_embed(unpadded_rob_pos.squeeze(dim=2)) # Use linear embedding
+        robot_tokens = robot_tokens + robot_pos_enc
         
-        id_indices = torch.arange(R, device=robot_tokens.device)[None, :]
-        agent_id_enc = self.agent_embed(id_indices).expand(B, -1, -1)
-        robot_tokens = robot_tokens + agent_id_enc
+        if self.agent_id_enc:
+            id_indices = torch.arange(R, device=robot_tokens.device)[None, :]
+            agent_id_enc = self.agent_embed(id_indices).expand(B, -1, -1)
+            robot_tokens = robot_tokens + agent_id_enc
 
         # === Decoder ===
         # The `memory_key_padding_mask` tells the decoder to ignore padded elements in `enc_out` (memory)

@@ -112,9 +112,16 @@ class Scenario(BaseScenario):
             "comms_rew_decay_max", None #0.5
         )
         
+        self.variable_team_size = kwargs.pop(
+            "variable_team_size", False
+        )
+        
         self.min_collision_distance = (
             0.005  # Minimum distance between entities for collision trigger
         )
+        
+        self.agent_spawn_radius = 0.2
+        self.agent_disable_prob = 0.5
 
         ScenarioUtils.check_kwargs_consumed(kwargs) # Warn is not all kwargs have been consumed
 
@@ -211,6 +218,7 @@ class Scenario(BaseScenario):
                 )
                 
             agent.tasks_rew = torch.zeros(batch_dim, device=device)
+            agent.null_action = torch.zeros((batch_dim, 2), device=device)
 
             world.add_agent(agent)  # Add the agent to the world
             self.agents.append(agent)
@@ -297,6 +305,7 @@ class Scenario(BaseScenario):
         return world
 
     def reset_world_at(self, env_index: int = None):
+        # TODO update to reset at specific env_index
         ScenarioUtils.spawn_entities_randomly(
             self.world.agents
             + self.obstacles
@@ -310,15 +319,31 @@ class Scenario(BaseScenario):
         )
 
         # RESET AGENTS
-        for agent in self.world.agents:
-            spawn_radius = 0.2  # You can adjust this value as needed
-            offset = torch.randn_like(self.base.state.pos)  # Random direction
-            offset = offset / torch.norm(offset, dim=-1, keepdim=True) * torch.rand_like(self.base.state.pos) * spawn_radius
-            # Compute new position and clamp within world bounds
-            new_pos = self.base.state.pos + offset
-            new_pos[..., 0] = torch.clamp(new_pos[..., 0], -self.world.x_semidim, self.world.x_semidim)
-            new_pos[..., 1] = torch.clamp(new_pos[..., 1], -self.world.y_semidim, self.world.y_semidim)
+        self.agents = []
+        for i, agent in enumerate(self.world.agents):
+            if i <= 1: # Mandates that we always have min 2 agents
+                agent.is_active = True
+            else:
+                agent.is_active = (torch.rand(1,).item() < self.agent_disable_prob)
+            
+            # If active, compute new position and clamp within world bounds
+            if agent.is_active:
+                self.agents.append(agent)
+                offset = torch.randn_like(self.base.state.pos)  # Random direction
+                offset = offset / torch.norm(offset, dim=-1, keepdim=True) * torch.rand_like(self.base.state.pos) * self.agent_spawn_radius
+                new_pos = self.base.state.pos + offset
+                new_pos[..., 0] = torch.clamp(new_pos[..., 0], -self.world.x_semidim, self.world.x_semidim)
+                new_pos[..., 1] = torch.clamp(new_pos[..., 1], -self.world.y_semidim, self.world.y_semidim)
+            # else, move to storage pos
+            else:
+                agent.trajs = -1*self.storage_pos[:]
+                new_pos = -1*self.storage_pos[:]
+                
+            # print("Agent active:", agent.is_active)
+            # print("New pos:", new_pos)
             agent.state.pos = new_pos
+            
+        # print("!! RESET ENV AGENTS:", self.agents, "shape:", len(self.agents))
 
         # RESET TASKS
         for task in self.tasks:
@@ -327,7 +352,7 @@ class Scenario(BaseScenario):
             task.state.pos[:] = self.storage_pos
         self.stored_tasks.fill_(True)
 
-        # TODO: RESET EXPLORED REGIONS & REGION FEATURES
+        # RESET EXPLORED REGIONS & REGION FEATURES
         self.discrete_cell_explored.fill_(False)
         self.discrete_cell_features.fill_(0)
         self.stored_explored_cell_centers.fill_(2.0*self.world.x_semidim)
@@ -339,17 +364,17 @@ class Scenario(BaseScenario):
         self.comms_pts.fill_(0)
         self._compute_frontier_pts()
         
-        # == INIT EXPLORED CELLS ==
+        # INIT EXPLORED CELLS
         self.agents_pos = torch.stack(
                 [a.state.pos for a in self.world.agents], dim=1)
         self.tasks_pos = torch.stack(
             [t.state.pos for t in self.tasks], dim=1)
         self._update_exploration()
         
-        # == UPDATE FRONTIERS ==
+        # UPDATE FRONTIERS
         self.frontiers = self._get_frontier_pts()
         
-        # == UPDATE DISCRETE CELL FEATURES ==
+        # UPDATE DISCRETE CELL FEATURES
         self._updated_discrete_cell_features() 
 
     def reward(self, agent: Agent):
@@ -381,7 +406,8 @@ class Scenario(BaseScenario):
             # Allocate completion credit to passengers
             self.shared_tasks_rew[:] = 0
             for a in self.world.agents:
-                self.shared_tasks_rew += self.agent_tasks_reward(a)
+                if a.is_active:
+                    self.shared_tasks_rew += self.agent_tasks_reward(a)
         
         # Process environment updates
         if is_last:
@@ -672,35 +698,35 @@ class Scenario(BaseScenario):
         cur_pos = agent.state.pos.clone().unsqueeze(1)
         visited_pos = agent.state.pos.clone().unsqueeze(1)
         base_pos = self.base.state.pos.unsqueeze(1)
-        agents_pos = torch.stack(
+        other_agents_pos = torch.stack(
             [a.state.pos for a in self.world.agents if a.name != agent.name],
             dim=1
         )
-        agents_pos = torch.cat((agents_pos, base_pos), dim=1)
-        num_pts = agents_pos.shape[1]
+        other_agents_pos = torch.cat((other_agents_pos, base_pos), dim=1)
+        num_pts = other_agents_pos.shape[1]
         
         while not torch.allclose(cur_pos, base_pos):
             # Get distance to nearest agents
-            dists = torch.norm(cur_pos - agents_pos, dim=2)
+            dists = torch.norm(cur_pos - other_agents_pos, dim=2)
             nearest_pos_idx = torch.argmin(dists, dim=1)
             min_dists = torch.min(dists, dim=1).values.unsqueeze(-1)
             
             # Track already-visited positions & update current position
             visited_pos = torch.cat((visited_pos, cur_pos), dim=1)
-            cur_pos = agents_pos[torch.arange(agents_pos.shape[0]), nearest_pos_idx].unsqueeze(1)
+            cur_pos = other_agents_pos[torch.arange(other_agents_pos.shape[0]), nearest_pos_idx].unsqueeze(1)
             # print(f"Updated visited pos: {visited_pos}\n New cur pos: {cur_pos}")
             # print(f"New max min dists: {max_min_dists}")
 
             # Remove the current position from agents_pos for the next iteration, but do not remove entries that are at base_pos
-            mask = ~torch.all(torch.isclose(agents_pos, cur_pos), dim=-1)
+            mask = ~torch.all(torch.isclose(other_agents_pos, cur_pos), dim=-1)
             # Filter agents_pos batch-wise to avoid shape errors
             filtered_agents_pos = []
-            for b in range(agents_pos.shape[0]):
-                filtered = agents_pos[b][mask[b]]
+            for b in range(other_agents_pos.shape[0]):
+                filtered = other_agents_pos[b][mask[b]]
                 while filtered.shape[0] < num_pts:
                     filtered = torch.cat((filtered, base_pos[b]), dim=0)
                 filtered_agents_pos.append(filtered)
-            agents_pos = torch.stack(filtered_agents_pos, dim=0)
+            other_agents_pos = torch.stack(filtered_agents_pos, dim=0)
             # print(f"New agents pos: {agents_pos}\nbase_pos: {base_pos}")
             
             max_min_dists = torch.where(min_dists > max_min_dists, min_dists, max_min_dists)
@@ -727,7 +753,7 @@ class Scenario(BaseScenario):
                 dim=1
             ),
             "obs_agents": torch.stack(
-                [a.state.pos for a in self.world.agents if a.name != agent.name],
+                [a.state.pos for a in self.world.agents if a.name != agent.name and a.is_active],
                 dim=1
             ),
             "obs_obstacles": torch.stack(
@@ -762,7 +788,21 @@ class Scenario(BaseScenario):
                                                      padding=0.0, 
                                                      output_size=(self.world.batch_dim, 100, 2))
         
+        rob_pos = torch.stack([agent.state.pos for agent in self.agents], dim=1)
+        # print("Env rob pos shape:", rob_pos.shape)
+        # Pad stacked_pos to [B, max_n_agents, 2]
+        B, R, D = rob_pos.shape
+        if R < self.max_n_agents:
+            pad_shape = (B, self.max_n_agents - R, D)
+            pad = torch.zeros(pad_shape, device=rob_pos.device, dtype=rob_pos.dtype)
+            rob_pos = torch.cat([rob_pos, pad], dim=1)
+        # print("Padded rob pos:", rob_pos)
+        
         # print("\nCell features sample:", cell_features[0][:4])
+        # torch.stack(
+        #         [agent.state.pos for agent in self.agents],
+        #         dim=1
+        #     )
         
         global_obs = {
             "cell_feats": cell_features, # torch.nested.to_padded_tensor(cell_features, padding=0.0),
@@ -772,10 +812,9 @@ class Scenario(BaseScenario):
 
             "num_cells": torch.tensor([len(ids) for ids in self.explored_cell_ids], dtype=cell_features.dtype, device=self.world.device),
 
-            "rob_pos": torch.stack(
-                [agent.state.pos for agent in self.world.agents],
-                dim=1
-            ),
+            "rob_pos": rob_pos,
+            
+            "num_robs": torch.tensor([len(self.agents) for _ in range(self.world.batch_dim)], dtype=torch.float32, device=self.world.device)
         }
 
         return global_obs
@@ -831,6 +870,8 @@ class Scenario(BaseScenario):
         # Plot agents traj
         if len(self.world.agents[0].trajs) > 0:
             for agent in self.world.agents:
+                if not agent.is_active:
+                    continue
                 traj_pts = agent.trajs[env_index][agent.traj_idx[env_index]:]
                 if len(traj_pts) > 0:
                     for pt in traj_pts:
@@ -850,7 +891,7 @@ class Scenario(BaseScenario):
                     agent_dist = torch.linalg.vector_norm(
                         agent1.state.pos - agent2.state.pos, dim=-1
                     )
-                    if agent_dist[env_index] <= self.comms_rendering_range:
+                    if agent_dist[env_index] <= self.comms_rew_decay_max:
                         color = Color.BLACK.value
                         line = rendering.Line(
                             (agent1.state.pos[env_index]),
