@@ -64,8 +64,7 @@ def nearest_frontier(agent_obs, world_idx, sampled_pos):
 
 def nearest_comms_midpt(agent_obs, world_idx, sampled_pos):
     """
-    Given set of candidate comms pos & current pos, returns (normalized?)
-    distance to nearest frontier pos
+    Given set of agent and base pos, returns distance to nearest comms midpot
 
     Requires scenario.observation to assign agents with local obs that include
     comms positions, labeled "obs_comms_midpt"
@@ -77,21 +76,60 @@ def nearest_comms_midpt(agent_obs, world_idx, sampled_pos):
     # Compute midpoints between agents-agents and agents-base
     agents = agent_obs["obs_agents"][world_idx]
     base = agent_obs["obs_base"][world_idx]
-
-    # print("Agents pos:", agents)
-    # print("Base pos:", base)
-
     comms_midpt = (agents + base) / 2.0
 
-    if len(agents) > 1:
+    if len(agents) > 1: # Consider dists between agents
         agents_midpt = (agents + agents) / 2.0
         comms_midpt = torch.cat((comms_midpt, agents_midpt), dim=0)
 
-    # print("Comms midpt:", comms_midpt)
-    # print("Sampled pos:", sampled_pos.unsqueeze(0))
-    # print("Min dist:", min_dist(comms_midpt, sampled_pos))
-
     return min_dist(comms_midpt, sampled_pos.unsqueeze(0))
+
+def farthest_comms_midpt(agent_obs, world_idx, sampled_pos):
+    """
+    Given set of agent and base pos, returns distance to farthest comms midpot
+
+    Requires scenario.observation to assign agents with local obs that include
+    comms positions, labeled "obs_comms_midpt"
+    """
+    if "obs_agents" not in agent_obs or "obs_base" not in agent_obs:
+        print("'obs_agents' or 'obs_base' not included in agent local observations")
+        return 0
+    
+    # Compute midpoints between agents-agents and agents-base
+    agents = agent_obs["obs_agents"][world_idx]
+    base = agent_obs["obs_base"][world_idx]
+    comms_midpt = (agents + base) / 2.0
+
+    if len(agents) > 1: # Consider dists between agents
+        agents_midpt = (agents + agents) / 2.0
+        comms_midpt = torch.cat((comms_midpt, agents_midpt), dim=0)
+
+    return max_dist(comms_midpt, sampled_pos.unsqueeze(0))
+
+
+def neediest_comms_midpt(agent_obs, world_idx, sampled_pos):
+    """
+    Given set of agent and base pos, returns distance to "neediest" comms midpot (point between agent i and base where distance between i and base is greatest)
+
+    Requires scenario.observation to assign agents with local obs that include
+    comms positions, labeled "obs_comms_midpt"
+    """
+    if "obs_agents" not in agent_obs or "obs_base" not in agent_obs:
+        print("'obs_agents' or 'obs_base' not included in agent local observations")
+        return 0
+    
+    # Compute midpoints between agents-base
+    agents = agent_obs["obs_agents"][world_idx]
+    base = agent_obs["obs_base"][world_idx]
+    dists = torch.cdist(agents, base.unsqueeze(0))
+    # print(f"Dists between agents pos {agents}\n and base {base}\nis {dists}")
+    d_max = torch.argmax(dists).item()
+    farthest_agent = agents[d_max]
+    # print(f"Farthest agent pos is {farthest_agent}")
+    comms_midpt = (farthest_agent + base) / 2.0
+    # print(f"Comms midpt: {comms_midpt}\nVal out: {torch.cdist(comms_midpt.unsqueeze(0), sampled_pos.unsqueeze(0)).item()}")
+    return torch.cdist(comms_midpt.unsqueeze(0), sampled_pos.unsqueeze(0)).item()
+
 
 def goto_base(agent_obs, world_idx, sampled_pos):
     """
@@ -118,3 +156,9 @@ def min_dist(points_a, points_b):
         return 0.0
     
     return torch.min(torch.cdist(points_a, points_b))
+
+def max_dist(points_a, points_b):
+    if len(points_a) == 0 or len(points_b) == 0:
+        return 0.0
+    
+    return torch.max(torch.cdist(points_a, points_b))

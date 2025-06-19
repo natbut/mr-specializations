@@ -494,6 +494,13 @@ class Scenario(BaseScenario):
         # [B, N_cells, 2]
         cell_centers = self.discrete_cell_centers
         B, N_cells, _ = cell_centers.shape
+        
+        # Base per cell
+        base_pos = torch.stack([self.base.state.pos], dim=1)
+        base_in_cell = (
+            (cell_centers.unsqueeze(2) - base_pos.unsqueeze(1)).abs() <= self.discrete_resolution / 2
+        ).all(dim=-1)  # [B, N_cells, N_tasks]
+        base_per_cell = base_in_cell.sum(dim=-1).float()  # [B, N_cells]
 
         # Tasks per cell
         tasks_pos = self.tasks_pos  # [B, N_tasks, 2]
@@ -548,16 +555,21 @@ class Scenario(BaseScenario):
         # print("Explored (0):", explored[0], "\n shape:", explored.shape)
 
         # Stack features into last dimension
-        self.discrete_cell_features = torch.stack(
-            [
+        features = [
                 tasks_per_cell,
                 obstacles_per_cell,
                 agents_per_cell,
                 frontiers_per_cell,
                 explored,
-            ],
+            ]
+        if self.comms_rew_decay_drop != None:
+            features.append(base_per_cell)
+        self.discrete_cell_features = torch.stack(
+            features,
             dim=-1,
         )  # [B, N_cells, 5]
+        
+        # print("Discrete features:", self.discrete_cell_features)
 
 
     def _compute_frontier_pts(self):
@@ -738,53 +750,9 @@ class Scenario(BaseScenario):
 
         agent.obs = local_obs # Agent obs for local planning
         # print(local_obs)
-
-        # Collect mothership global obs for role assignments
-        # print("Cell feats (0)", self.discrete_cell_features[0], " shape:", self.discrete_cell_features.shape)
-        # print("Cell pos (0):", self.explored_cell_centers[0])
-        # print(" shape:", self.explored_cell_centers.shape)
-        
-        
-        # Find max number of explored cells across all batches
-        # max_n_ids = max(ids.shape[0] if isinstance(ids, torch.Tensor) else len(ids) for ids in self.explored_cell_ids)
-        # # Zero padding
-        # pad_value_feat = 0.0  # For features, pad with zeros
-        # pad_value_pos = 0.0 # 2.0 * self.world.x_semidim  # For positions, pad with out-of-bounds value
-
-        # # Pad features and centers for each batch
-        # padded_cell_features = []
-        # padded_cell_centers = []
-        # for b, ids in enumerate(self.explored_cell_ids):
-        #     if isinstance(ids, torch.Tensor) and ids.numel() > 0:
-        #         feats = self.discrete_cell_features[b, ids]
-        #         centers = self.discrete_cell_centers[b, ids]
-        #     else:
-        #         feats = self.discrete_cell_features.new_zeros((0, self.num_feats))
-        #         centers = self.discrete_cell_centers.new_full((0, 2), pad_value_pos)
-        #     n = feats.shape[0]
-        #     if n < max_n_ids:
-        #         pad_feats = feats.new_full((max_n_ids - n, feats.shape[1]), pad_value_feat)
-        #         pad_centers = centers.new_full((max_n_ids - n, centers.shape[1]), pad_value_pos)
-        #         feats = torch.cat([feats, pad_feats], dim=0)
-        #         centers = torch.cat([centers, pad_centers], dim=0)
-        #     padded_cell_features.append(feats)
-        #     padded_cell_centers.append(centers)
-
-        # cell_features = torch.stack(padded_cell_features, dim=0)
-        # cell_centers = torch.stack(padded_cell_centers, dim=0)
         
         cell_features = torch.nested.as_nested_tensor([self.discrete_cell_features[b, ids] for b, ids in enumerate(self.explored_cell_ids)], device=self.world.device)
         cell_centers = torch.nested.as_nested_tensor([self.discrete_cell_centers[b, ids] for b, ids in enumerate(self.explored_cell_ids)], device=self.world.device)
-
-        # print("Cell features:", cell_features)
-        # print("Cell centers:", cell_centers)
-
-        # print("Padded cell features:", torch.nested.to_padded_tensor(cell_features, 
-        #                                                              padding=0.0, 
-        #                                                              output_size=(self.world.batch_dim, 100, self.num_feats)).shape)
-        # print("Padded cell centers:", torch.nested.to_padded_tensor(cell_centers, 
-        #                                                             padding=0.0, 
-        #                                                             output_size=(self.world.batch_dim, 100, 2)).shape)
         
         cell_features = torch.nested.to_padded_tensor(cell_features, 
                                                       padding=0.0, 
