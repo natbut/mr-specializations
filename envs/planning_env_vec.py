@@ -1,3 +1,4 @@
+import time
 from typing import Dict, Tuple
 
 import torch
@@ -8,7 +9,7 @@ from vmas import make_env
 from vmas.simulator.scenario import BaseScenario
 
 from envs.heuristics import *
-import time
+
 
 class VMASPlanningEnv(EnvBase):
     def __init__(
@@ -21,6 +22,7 @@ class VMASPlanningEnv(EnvBase):
         # TODO: Make this part of conf file
         self.heuristic_eval_fns = [nearest_task, 
                                    nearest_comms_midpt, 
+                                   neediest_comms_midpt,#farthest_comms_midpt,
                                    nearest_frontier, 
                                    nearest_agent, 
                                    goto_base]
