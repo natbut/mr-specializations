@@ -321,7 +321,7 @@ class Scenario(BaseScenario):
         # RESET AGENTS
         self.agents = []
         for i, agent in enumerate(self.world.agents):
-            if i <= 1: # Mandates that we always have min 2 agents
+            if i <= 1 or not self.variable_team_size: # Mandates that we always have min 2 agents
                 agent.is_active = True
             else:
                 agent.is_active = (torch.rand(1,).item() < self.agent_disable_prob)

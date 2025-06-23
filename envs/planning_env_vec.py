@@ -198,7 +198,7 @@ class VMASPlanningEnv(EnvBase):
         heuristic_weights = actions["action"] # NOTE THESE ARE WEIGHTS FOR EVERY NODE, BUT WE ONLY USE AGENT LOCS
         if self.render:
             print(f"\nHeuristic Weights:\n {heuristic_weights} Shape: {heuristic_weights.shape}") # [B, N_AGENTS, N_FEATS]
-        # print("WEIGHTS:", heuristic_weights, "shape:", heuristic_weights.shape)
+        # print("WEIGHTS SAMPLE:", heuristic_weights[:5], "shape:", heuristic_weights.shape)
         # print("AGENTS:", self.sim_env.scenario.agents, "shape:", len(self.sim_env.agents))
 
         # Execute and aggregate rewards

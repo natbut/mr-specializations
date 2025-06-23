@@ -1,0 +1,8 @@
+
+num_envs: 16
+
+max_steps: 1024
+macro_step: 128
+horizon: 0.25
+
+render: False

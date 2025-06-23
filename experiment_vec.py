@@ -380,13 +380,14 @@ def train_PPO(scenario,
             # Initial batch data prep for vectorized environment
             data = tensordict_data.flatten(0,1) # Flatten trajectory to fix batching from collector
             data["sample_log_prob"] = data["sample_log_prob"].sum(dim=-1)#.unsqueeze(-1) # Sum log prob for each agent
-
+            # print("\n\nSample log prob:", data["sample_log_prob"][:5])
+            
             # We re-compute advantage at each epoch as its value depends on the value
             # network which is updated in the inner loop.
             advantage_module(data)
 
             # Print debug stats
-            if ep % 8 == 0:
+            if ep == 0:
                 print("\n EP:", ep)
                 print("\nTraj IDs:\n", data["collector", "traj_ids"][:10].cpu().tolist())
                 print("\nSample log prob:\n", data["sample_log_prob"][:10].cpu().tolist())
