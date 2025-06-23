@@ -8,8 +8,14 @@ from torchrl.envs import EnvBase
 from vmas import make_env
 from vmas.simulator.scenario import BaseScenario
 
-from envs.heuristics import *
+import envs.heuristics
 
+def load_func(dotpath : str):
+    """ load function in module.  function is right-most segment """
+    func = dotpath #dotpath.rsplit(".", maxsplit=1)
+    m = envs.heuristics #(module_)
+    # print("Func:", func, "m:", m)
+    return getattr(m, func)
 
 class VMASPlanningEnv(EnvBase):
     def __init__(
@@ -19,16 +25,10 @@ class VMASPlanningEnv(EnvBase):
             scenario_kwargs: Dict = None,
             ):
         
-        # TODO: Make this part of conf file
-        self.heuristic_eval_fns = [nearest_task, 
-                                   nearest_comms_midpt, 
-                                   neediest_comms_midpt,#farthest_comms_midpt,
-                                   nearest_frontier, 
-                                   nearest_agent, 
-                                   goto_base]
-        
         self.scenario = scenario
 
+        self.heuristic_eval_fns = env_kwargs.pop("heuristic_fns", None)
+        self.heuristic_eval_fns = [load_func(name) for name in self.heuristic_eval_fns]
         self.num_envs = env_kwargs.pop("num_envs", 1)
         self.horizon = env_kwargs.pop("horizon", 0.25)
         self.macro_step = env_kwargs.pop("macro_step", 10) # Number of sub-steps to execute per step 
