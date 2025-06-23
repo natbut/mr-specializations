@@ -7,7 +7,7 @@ max_n_tasks: 10
 max_n_obstacles: 10
 num_feats: 6
 
-variable_team_size: True
+variable_team_size: False
 
 agent_radius: 0.03
 
@@ -16,7 +16,7 @@ world_spawning_y: 1
 
 comms_rendering_range: 0
 
-tasks_respawn_rate: 0.00025
+tasks_respawn_rate: 0.0001 #0.00025
 task_comp_range: 0.1
 
 min_distance_between_entities: 0.05

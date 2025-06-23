@@ -315,7 +315,7 @@ class EnvironmentTransformer(nn.Module):
         vals = self.output_head(decoder_out)
         h_loc, h_scale = self.norm_extractor(vals)
 
-        if self.calls % 1000 == 0:
+        if self.calls % 10000 == 0:
             # print(f"Sample positional enc at call {self.calls}:\n", x_pos)
             print(f"Sample encoder out at call {self.calls}:\n", enc_out)
             print(f"Sample decoder out at call {self.calls}:\n", vals)
