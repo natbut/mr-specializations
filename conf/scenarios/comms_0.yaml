@@ -1,5 +1,5 @@
 
-max_n_agents_holonomic: 5
+max_n_agents_holonomic: 3
 max_n_agents_diff_drive: 0
 max_n_agents_car: 0
 

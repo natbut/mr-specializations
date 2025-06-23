@@ -159,6 +159,7 @@ def train(scenario,
           env_configs,
           rl_configs,
           model_configs,
+          checkpt_fp=None,
           wandb_mode="TRAIN",
           project_name=None
           ):
@@ -171,6 +172,12 @@ def train(scenario,
         env_config = load_yaml_to_kwargs(env_configs[test])
         rl_config = load_yaml_to_kwargs(rl_configs[test])
         model_config = load_yaml_to_kwargs(model_configs[test])
+        if checkpt_fp:
+            torch.serialization.add_safe_globals([defaultdict])
+            torch.serialization.add_safe_globals([list])
+            checkpt_data = torch.load(checkpt_fp, weights_only=True)
+        else:
+            checkpt_data = None
 
         # PPO PARAMS #
         lr = rl_config["lr"]
@@ -212,6 +219,7 @@ def train(scenario,
                   test_name,
                   wandb_mode=wandb_mode,
                   project_name=project_name,
+                  checkpt_data=checkpt_data,
                   )
 
 
@@ -234,14 +242,20 @@ def train_PPO(scenario,
               test_name,
               wandb_mode=None,
               project_name=None,
+              checkpt_data=None,
               ):
     
     ### INIT WANDB ###
     if wandb_mode=="TRAIN":
+        resuming = None
+        if checkpt_data is not None:
+            resuming = "allow"
         run = wandb.init(
             entity="nlbutler18-oregon-state-university",
             project=project_name,
             name=test_name,
+            id=test_name,
+            resume=resuming
         )
     
 
@@ -365,9 +379,18 @@ def train_PPO(scenario,
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optim, total_frames // frames_per_batch, 0.0
     )
+
+    if checkpt_data is not None:
+        tf_act.load_state_dict(checkpt_data['actor_state_dict'])
+        tf_crit.load_state_dict(checkpt_data['actor_state_dict'])
+        optim.load_state_dict(checkpt_data['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpt_data['scheduler_state_dict'])
+        env.load_state_dict(checkpt_data['env_state_dict'])
+        logs = checkpt_data['logs']
+    else:
+        logs = defaultdict(list)
     
     ### TRAINING LOOP ###
-    logs = defaultdict(list)
     pbar = tqdm(total=total_frames)
     eval_str = ""
     best_reward = float("-inf")
@@ -479,7 +502,7 @@ def train_PPO(scenario,
                     wandb.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})
                     wandb.log({"eval/cum_reward": eval_rollout["next", "reward"].sum().item()})
                     wandb.log({"eval/step_count": eval_rollout["step_count"].max().item()})
-                    wandb.log({f"eval/env0_rob{j}_action{i}": eval_rollout["action"][0, j, i] for i in range(num_heuristics) for j in range(base_env.sim_env.n_agents)})
+                    # wandb.log({f"eval/env0_rob{j}_action{i}": eval_rollout["action"][0, j, i] for i in range(num_heuristics) for j in range(base_env.sim_env.n_agents)})
 
                 del eval_rollout
             env.base_env.render = False
