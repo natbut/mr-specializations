@@ -12,15 +12,16 @@ from experiment_vec import train
 if __name__ == "__main__":
 
     if len(sys.argv) < 6:
-        print("Usage: python train.py <scenario_fp> <env_fp> <algo_fp> <model_fp> <wandb_mode> <project_name>")
+        print("Usage: python train.py <scenario_fp> <env_fp> <algo_fp> <model_fp> <checkpt_fp> <wandb_mode> <project_name>")
         sys.exit(1)
 
     scenario_fp = sys.argv[1]
     env_fp = sys.argv[2]
     algo_fp = sys.argv[3]
     model_fp = sys.argv[4]
-    wandb_mode = sys.argv[5]
-    project_name = sys.argv[6]
+    checkpt_fp = sys.argv[5]
+    wandb_mode = sys.argv[6]
+    project_name = sys.argv[7]
 
     # Env, Scenario & params
     scenario = Scenario()  
@@ -41,17 +42,25 @@ if __name__ == "__main__":
         # "conf/models/mat_9.yaml",
     # ]
 
+    # Checkpoint
+    checkpoint = [checkpt_fp]
+    if checkpt_fp == "None":
+        checkpt_fp = None
+
     train(scenario, 
             scenario_configs,
             env_configs,
             rl_configs,
             model_configs,
+            checkpt_fp,
             wandb_mode=wandb_mode,
             project_name=project_name
             )
     
     # python train.py "conf/scenarios/comms_0.yaml" "conf/envs/planning_env_explore_1.yaml" "conf/algos/ppo_4_0.yaml" "conf/models/mat_2_0.yaml" "TRAIN" "mothership-complex"
     
+    # python train.py "conf/scenarios/exploring_0.yaml" "conf/envs/planning_env_explore_1.yaml" "conf/algos/ppo_4_0.yaml" "conf/models/mat_9.yaml" "runs\exploring_0_planning_env_explore_1_ppo_4_0_mat_9\checkpoints\best.pt" "TRAIN" "mothership-complex"
+
     # stats = pstats.Stats(pr)
     # stats.sort_stats(pstats.SortKey.TIME)
     # # Now you have two options, either print the data or save it as a file
