@@ -223,6 +223,37 @@ def train(scenario,
                   )
 
 
+def eval(scenario, scenario_configs, env_configs, model_configs, checkpt_fp, save_fp, eval_id, rollout_steps):
+
+    print("Eval setup...")
+
+    scenario_config = load_yaml_to_kwargs(scenario_configs[0])
+    env_config = load_yaml_to_kwargs(env_configs[0])
+    model_config = load_yaml_to_kwargs(model_configs[0])
+    torch.serialization.add_safe_globals([defaultdict])
+    torch.serialization.add_safe_globals([list])
+    checkpt_data = torch.load(checkpt_fp, weights_only=True)
+
+    device = init_device()
+
+    # DEFINE ENVIRONMENT #
+    env = create_env(scenario, device, env_config, scenario_config)
+
+    # ACTOR POLICY MODULES, LOAD WEIGHTS #
+    num_features = model_config["num_features"]
+    num_heuristics = model_config["num_heuristics"]
+    d_feedforward = model_config["d_feedforward"]
+    d_model = model_config["d_model"]
+    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, device)
+    tf_act.load_state_dict(checkpt_data['actor_state_dict'])
+    tf_act.eval()
+
+    # RUN EVAL #
+    logs = defaultdict(list)
+    print("Setup complete, running eval...")
+    run_eval(env, policy_module, eval_id, save_fp, logs, rollout_steps, wandb_mode=None)
+
+
 
 def train_PPO(scenario,
               scenario_config,
@@ -257,86 +288,19 @@ def train_PPO(scenario,
             id=test_name,
             resume=resuming
         )
+
+    device = init_device()
     
-
-    ### HYPERPARAMS ###
-    torch.set_num_threads(1) # NOTE Recommended by Manuel to accelerate training
-    is_fork = multiprocessing.get_start_method() == "fork"
-    device = (
-        torch.device(0)
-        if torch.cuda.is_available() and not is_fork
-        else torch.device("cpu")
-    )
-
     # DEFINE ENVIRONMENT #
-    num_envs = env_config["num_envs"]
-    base_env = VMASPlanningEnv(scenario,
-                                device=device,
-                                env_kwargs=env_config,
-                                scenario_kwargs=scenario_config,
-                                )
-
-    env = TransformedEnv(
-        base_env,
-        Compose(
-            # ObservationNorm(in_keys=["cell_feats"]),
-            # ObservationNorm(in_keys=["cell_pos"]),
-            # ObservationNorm(in_keys=["rob_pos"]),
-            DoubleToFloat(in_keys=["cell_feats", "cell_pos", "rob_pos"]),
-            StepCounter(),
-        ),
-        device=device,
-    )
-
-    # Initialize observation norm stats
-    # for t in env.transform:
-    #     if isinstance(t, ObservationNorm):
-    #         print("Normalizing obs", t.in_keys)
-    #         t.init_stats(num_iter=10*num_envs, reduce_dim=[0,1], cat_dim=0) # num_iter should be divisible (?) or match (?) horizon in env
-
-    check_env_specs(env)
+    env = create_env(scenario, device, env_config, scenario_config)
 
     ### ACTOR & CRITIC POLICY MODULES ###
     num_features = model_config["num_features"]
     num_heuristics = model_config["num_heuristics"]
     d_feedforward = model_config["d_feedforward"]
     d_model = model_config["d_model"]
-
-    tf_act = EnvironmentTransformer(num_features=num_features,
-                                        num_heuristics=num_heuristics,
-                                        d_feedforward=d_feedforward,
-                                        d_model=d_model,
-                                        ).to(device)
-    
-    tf_crit = EnvironmentCriticTransformer(num_features=num_features,
-                                            d_model=d_model,
-                                            use_attention_pool=True,
-                                            ).to(device)
-
-    policy_module = TensorDictModule(
-        tf_act,
-        in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"), ("rob_pos"), ("num_robs")],
-        out_keys=["loc","scale"]
-    )
-
-    policy_module = ProbabilisticActor( # Actions sampled from dist during exploration
-        module=policy_module,
-        spec=env.action_spec,
-        in_keys=["loc", "scale"],
-        distribution_class=TanhNormal,
-        distribution_kwargs={
-            "low": env.action_spec_unbatched.space.low,
-            "high": env.action_spec_unbatched.space.high,
-        },
-        return_log_prob=True,
-        # NOTE we need the log-prob for the numerator of the importance weights
-    )
-
-    value_module = ValueOperator(
-        module=tf_crit,
-        in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"),],
-        out_keys=["state_value"]
-    )
+    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, device)
+    tf_crit, value_module = create_critic(num_features, d_model, device)
 
     print("Running policy:", policy_module(env.reset()))
     print("Running value:", value_module(env.reset())) # NOTE leave this in to init lazy modules
@@ -469,43 +433,16 @@ def train_PPO(scenario,
             wandb.log({"train/advantage_std": data["advantage"].std().item()})
             wandb.log({"train/state_value_mean": data["state_value"].mean().item()}) 
             wandb.log({"train/value_target_mean": data["value_target"].mean().item()})
-            wandb.log({f"actions/rob{j}_action{i}_mean": data["action"][:, j, i].mean().item() for i in range(num_heuristics) for j in range(base_env.sim_env.n_agents)})
+            wandb.log({f"actions/rob{j}_action{i}_mean": data["action"][:, j, i].mean().item() for i in range(num_heuristics) for j in range(env.base_env.sim_env.n_agents)})
 
         lr_str = f"lr policy: {logs['lr'][-1]: 4.4f}"
         if i % 10 == 0:
             # Run evaluation
-            env.base_env.render = True
-            env.base_env.count = 0
-            render_name = f"render_{i}"
-            render_fp = os.path.join(f"{test_folder_path}/gif/", render_name)
-            env.base_env.render_fp = render_fp
-            os.makedirs(os.path.dirname(render_fp), exist_ok=True)
-            # We evaluate the policy once every 10 batches of data.
-            # Evaluation is rather simple: execute the policy without exploration
-            # (take the expected value of the action distribution) for a given
-            # number of steps.
-            with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
-                # execute a rollout with the trained policy
-                eval_rollout = env.rollout(16, policy_module, return_contiguous=False)
-                env.reset()
-                logs["eval reward"].append(eval_rollout["next", "reward"].mean().item())
-                logs["eval reward (sum)"].append(
-                    eval_rollout["next", "reward"].sum().item()
-                )
-                logs["eval step_count"].append(eval_rollout["step_count"].max().item())
-                eval_str = (
+            run_eval(env, policy_module, i, test_folder_path, logs, wandb_mode)
+            eval_str = (
                     f"eval cumulative reward: {logs['eval reward (sum)'][-1]: 4.4f} "
                     f"(init: {logs['eval reward (sum)'][0]: 4.4f})"
                 )
-
-                if wandb_mode != None:
-                    wandb.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})
-                    wandb.log({"eval/cum_reward": eval_rollout["next", "reward"].sum().item()})
-                    wandb.log({"eval/step_count": eval_rollout["step_count"].max().item()})
-                    # wandb.log({f"eval/env0_rob{j}_action{i}": eval_rollout["action"][0, j, i] for i in range(num_heuristics) for j in range(base_env.sim_env.n_agents)})
-
-                del eval_rollout
-            env.base_env.render = False
 
         # Save checkpoints & best-performing models, including environment state
         if data["next", "reward"].mean().item() > best_reward or i % 5 == 0:
@@ -538,6 +475,126 @@ def train_PPO(scenario,
         run.finish()    
 
 
+def create_env(scenario, device, env_config, scenario_config) -> TransformedEnv:
+    base_env = VMASPlanningEnv(scenario,
+                                device=device,
+                                env_kwargs=env_config,
+                                scenario_kwargs=scenario_config,
+                                )
+
+    env = TransformedEnv(
+        base_env,
+        Compose(
+            # ObservationNorm(in_keys=["cell_feats"]),
+            # ObservationNorm(in_keys=["cell_pos"]),
+            # ObservationNorm(in_keys=["rob_pos"]),
+            DoubleToFloat(in_keys=["cell_feats", "cell_pos", "rob_pos"]),
+            StepCounter(),
+        ),
+        device=device,
+    )
+
+    # Initialize observation norm stats
+    # for t in env.transform:
+    #     if isinstance(t, ObservationNorm):
+    #         print("Normalizing obs", t.in_keys)
+    #         t.init_stats(num_iter=10*num_envs, reduce_dim=[0,1], cat_dim=0) # num_iter should be divisible (?) or match (?) horizon in env
+
+    check_env_specs(env)
+
+    return env
+
+def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, device):
+    tf_act = EnvironmentTransformer(num_features=num_features,
+                                        num_heuristics=num_heuristics,
+                                        d_feedforward=d_feedforward,
+                                        d_model=d_model,
+                                        ).to(device)
+
+    policy_module = TensorDictModule(
+        tf_act,
+        in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"), ("rob_pos"), ("num_robs")],
+        out_keys=["loc","scale"]
+    )
+
+    policy_module = ProbabilisticActor( # Actions sampled from dist during exploration
+        module=policy_module,
+        spec=env.action_spec,
+        in_keys=["loc", "scale"],
+        distribution_class=TanhNormal,
+        distribution_kwargs={
+            "low": env.action_spec_unbatched.space.low,
+            "high": env.action_spec_unbatched.space.high,
+        },
+        return_log_prob=True,
+        # NOTE we need the log-prob for the numerator of the importance weights
+    )
+
+    return tf_act, policy_module
+
+def create_critic(num_features, d_model, device):
+    tf_crit = EnvironmentCriticTransformer(num_features=num_features,
+                                            d_model=d_model,
+                                            use_attention_pool=True,
+                                            ).to(device)
+
+    value_module = ValueOperator(
+        module=tf_crit,
+        in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"),],
+        out_keys=["state_value"]
+    )
+
+    return tf_crit, value_module
+
+
+def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rollout_steps=16, wandb_mode=None):
+    # Run evaluation
+    env.base_env.render = True
+    env.base_env.count = 0
+    render_name = f"render_{eval_id}"
+    render_fp = os.path.join(f"{folder_path}/gif/", render_name)
+    env.base_env.render_fp = render_fp
+    os.makedirs(os.path.dirname(render_fp), exist_ok=True)
+
+    # Evaluation is rather simple: execute the policy without exploration
+    # (take the expected value of the action distribution) for a given
+    # number of steps.
+    with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
+        # execute a rollout with the trained policy
+        eval_rollout = env.rollout(rollout_steps, policy_module, return_contiguous=False)
+        env.reset()
+        logs["eval reward"].append(eval_rollout["next", "reward"].mean().item())
+        logs["eval reward (sum)"].append(
+            eval_rollout["next", "reward"].sum().item()
+        )
+        logs["eval step_count"].append(eval_rollout["step_count"].max().item())
+
+        # for j in range(env.base_env.sim_env.n_agents):
+        #     for i in range(num_heuristics):
+        #         logs[f"eval/env0_rob{j}_action{i}"] = eval_rollout["action"]...
+        logs["action"] = eval_rollout["action"]
+        print("\nAction:\n", logs["action"])
+
+        if wandb_mode != None:
+            wandb.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})
+            wandb.log({"eval/cum_reward": eval_rollout["next", "reward"].sum().item()})
+            wandb.log({"eval/step_count": eval_rollout["step_count"].max().item()})
+            # wandb.log({f"eval/env0_rob{j}_action{i}": eval_rollout["action"][0, j, i] for i in range(num_heuristics) for j in range(base_env.sim_env.n_agents)})
+
+        del eval_rollout
+    env.base_env.render = False
+    
+
 def save_checkpt(checkpt_path, checkpt_data):
     os.makedirs(os.path.dirname(checkpt_path), exist_ok=True)
     torch.save(checkpt_data, checkpt_path)
+
+def init_device():
+    torch.set_num_threads(1) # NOTE Recommended by Manuel to accelerate training
+    is_fork = multiprocessing.get_start_method() == "fork"
+    device = (
+        torch.device(0)
+        if torch.cuda.is_available() and not is_fork
+        else torch.device("cpu")
+    )
+    return device

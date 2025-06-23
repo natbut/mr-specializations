@@ -163,7 +163,7 @@ class EnvironmentTransformer(nn.Module):
         noise_std=0.1,
         max_cells=100, # <-- IMPORTANT: match padding size
         cell_pos_as_features=True,
-        agent_id_enc=False
+        agent_id_enc=True
     ):
         super().__init__()
         self.d_model = d_model
@@ -180,7 +180,7 @@ class EnvironmentTransformer(nn.Module):
         else:
             self.feature_embed = nn.Linear(num_features, d_model)
         self.pos_embed = PositionalEncoding(d_model)
-        # self.agent_embed = nn.Embedding(max_robots, d_model)
+        self.agent_embed = nn.Embedding(max_robots, d_model)
 
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
@@ -218,7 +218,7 @@ class EnvironmentTransformer(nn.Module):
             num_cells = num_cells.unsqueeze(0) # Ensure cell_lengths is also batched
 
         B, N_padded, _ = cell_features.shape # N_padded is MAX_CELLS
-        R, NR_padded, _ = robot_positions.shape  # NR_padded is max_n_agents
+        R = robot_positions.size(1)  # NR_padded is max_n_agents
 
         # Create attention mask for padding
         # mask is (B, N_padded) boolean tensor, True where token should be ignored (padding)
@@ -265,12 +265,13 @@ class EnvironmentTransformer(nn.Module):
             # print("Num robots:", num_robots)
 
             # Create robot mask: True where robot is padding (to be ignored)
-            robot_mask = torch.arange(NR_padded, device=robot_positions.device).expand(B, NR_padded) < num_robots.unsqueeze(1)
-            # print("robot_mask:", robot_mask)
-            unpadded_rob_pos = torch.stack([robot_pos_exp[b][robot_mask[b]] for b in range(B)])
-            # print("masked_robot_pos", unpadded_rob_pos)
-            dists = torch.norm(unpadded_rob_pos - cell_pos_exp, dim=-1) # [B, R, N_padded]
-            # print("Dists:", dists)
+            # robot_mask = torch.arange(NR_padded, device=robot_positions.device).expand(B, NR_padded) < num_robots.unsqueeze(1)
+            # # print("robot_mask:", robot_mask)
+            # unpadded_rob_pos = torch.stack([robot_pos_exp[b][robot_mask[b]] for b in range(B)])
+            # # print("masked_robot_pos", unpadded_rob_pos)
+            # dists = torch.norm(unpadded_rob_pos - cell_pos_exp, dim=-1) # [B, R, N_padded]
+            dists = torch.norm(robot_pos_exp - cell_pos_exp, dim=-1)
+            # # print("Dists:", dists)
             
             # Apply a large value to distances corresponding to padding
             dists = dists.masked_fill(mask.unsqueeze(1), float('inf')) # [B, R, N_padded]
@@ -299,7 +300,8 @@ class EnvironmentTransformer(nn.Module):
         # === Add positional & agent-ID embeddings ===
         # robot_positions: [B, R, 2]
         # print("robot positions shape:", robot_positions.shape, "unpadded positions shape:", unpadded_rob_pos.squeeze(dim=2).shape)
-        robot_pos_enc = self.pos_embed(unpadded_rob_pos.squeeze(dim=2)) # Use linear embedding
+        robot_pos_enc = self.pos_embed(robot_positions) # Use linear embedding
+        # robot_pos_enc = self.pos_embed(unpadded_rob_pos.squeeze(dim=2)) # Use linear embedding
         robot_tokens = robot_tokens + robot_pos_enc
         
         if self.agent_id_enc:
@@ -315,12 +317,15 @@ class EnvironmentTransformer(nn.Module):
         vals = self.output_head(decoder_out)
         h_loc, h_scale = self.norm_extractor(vals)
 
-        if self.calls % 10000 == 0:
+        if self.calls % 8000 == 0:
             # print(f"Sample positional enc at call {self.calls}:\n", x_pos)
-            print(f"Sample encoder out at call {self.calls}:\n", enc_out)
-            print(f"Sample decoder out at call {self.calls}:\n", vals)
-            print(f"Sample h_weights loc at call {self.calls}:\n", h_loc)
-            print(f"Sample h_weights scale at call {self.calls}:\n", h_scale)
+            print(f"Sample features at call {self.calls}:\n", cell_feats_with_pos[:5])
+            print(f"Sample embedded features at call {self.calls}:\n", x[:5])
+            print(f"Sample attention weights at call {self.calls}:\n",)
+            print(f"Sample encoder out at call {self.calls}:\n", enc_out[:5])
+            print(f"Sample decoder out at call {self.calls}:\n", vals[:5])
+            print(f"Sample h_weights loc at call {self.calls}:\n", h_loc[:5])
+            print(f"Sample h_weights scale at call {self.calls}:\n", h_scale[:5])
 
         self.calls += 1
 

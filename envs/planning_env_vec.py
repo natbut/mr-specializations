@@ -16,14 +16,6 @@ def load_func(dotpath : str):
     m = envs.heuristics #(module_)
     # print("Func:", func, "m:", m)
     return getattr(m, func)
-import envs.heuristics
-
-def load_func(dotpath : str):
-    """ load function in module.  function is right-most segment """
-    func = dotpath #dotpath.rsplit(".", maxsplit=1)
-    m = envs.heuristics #(module_)
-    # print("Func:", func, "m:", m)
-    return getattr(m, func)
 
 class VMASPlanningEnv(EnvBase):
     def __init__(
@@ -35,8 +27,6 @@ class VMASPlanningEnv(EnvBase):
         
         self.scenario = scenario
 
-        self.heuristic_eval_fns = env_kwargs.pop("heuristic_fns", None)
-        self.heuristic_eval_fns = [load_func(name) for name in self.heuristic_eval_fns]
         self.heuristic_eval_fns = env_kwargs.pop("heuristic_fns", None)
         self.heuristic_eval_fns = [load_func(name) for name in self.heuristic_eval_fns]
         self.num_envs = env_kwargs.pop("num_envs", 1)
