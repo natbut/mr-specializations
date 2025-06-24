@@ -455,9 +455,11 @@ def train_PPO(scenario,
                 'logs': logs,
                 'env_state_dict': env.state_dict() if hasattr(env, "state_dict") else None,
                 }
-            checkpoint_name = f"checkpt_{i}.pt"
-            checkpoint_path = os.path.join(f"{test_folder_path}/checkpoints/", checkpoint_name)
-            save_checkpt(checkpoint_path, checkpt_data)
+            
+            if i % 5 == 0:
+                checkpoint_name = f"checkpt_{i}.pt"
+                checkpoint_path = os.path.join(f"{test_folder_path}/checkpoints/", checkpoint_name)
+                save_checkpt(checkpoint_path, checkpt_data)
 
             if data["next", "reward"].mean().item() > best_reward:
                 best_reward = data["next", "reward"].mean().item()
