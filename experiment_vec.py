@@ -438,7 +438,7 @@ def train_PPO(scenario,
         lr_str = f"lr policy: {logs['lr'][-1]: 4.4f}"
         if i % 10 == 0:
             # Run evaluation
-            run_eval(env, policy_module, i, test_folder_path, logs, wandb_mode)
+            run_eval(env, policy_module, i, test_folder_path, logs, 16, wandb_mode)
             eval_str = (
                     f"eval cumulative reward: {logs['eval reward (sum)'][-1]: 4.4f} "
                     f"(init: {logs['eval reward (sum)'][0]: 4.4f})"
@@ -550,6 +550,9 @@ def create_critic(num_features, d_model, device):
 
 
 def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rollout_steps=16, wandb_mode=None):
+    if type(rollout_steps) is not int:
+        rollout_steps = int(rollout_steps)
+
     # Run evaluation
     env.base_env.render = True
     env.base_env.count = 0
