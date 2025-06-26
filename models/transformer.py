@@ -163,7 +163,8 @@ class EnvironmentTransformer(nn.Module):
         noise_std=0.1,
         max_cells=100, # <-- IMPORTANT: match padding size
         cell_pos_as_features=True,
-        agent_id_enc=False
+        agent_id_enc=False,
+        agent_attn=False
     ):
         super().__init__()
         self.d_model = d_model
@@ -173,6 +174,7 @@ class EnvironmentTransformer(nn.Module):
         self.max_cells = max_cells
         self.cell_pos_as_features = cell_pos_as_features
         self.agent_id_enc = agent_id_enc
+        self.agent_attn = agent_attn
 
         # Embeddings
         if self.cell_pos_as_features:
@@ -202,6 +204,9 @@ class EnvironmentTransformer(nn.Module):
             batch_first=True
         )
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+
+        if self.agent_attn:
+            self.agent_cross_attn = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
 
         # Output head: raw logits for Categorical
         self.output_head = nn.Linear(d_model, 2 * num_heuristics)
@@ -313,6 +318,10 @@ class EnvironmentTransformer(nn.Module):
         # === Decoder ===
         # The `memory_key_padding_mask` tells the decoder to ignore padded elements in `enc_out` (memory)
         decoder_out = self.decoder(tgt=robot_tokens, memory=enc_out, memory_key_padding_mask=mask)
+
+        if self.agent_attn:
+            cross_agents, _ = self.agent_cross_attn(decoder_out, decoder_out, decoder_out)
+            decoder_out = decoder_out + cross_agents
 
         # === Heuristic outputs ===
         vals = self.output_head(decoder_out)

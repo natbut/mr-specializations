@@ -98,13 +98,15 @@ class PlanningAgent(Agent):
             samp_x = torch.empty(max_pts, dtype=current_pos.dtype, device=current_pos.device).uniform_(samp_rng_x[0], samp_rng_x[1])
             samp_y = torch.empty(max_pts, dtype=current_pos.dtype, device=current_pos.device).uniform_(samp_rng_y[0], samp_rng_y[1])
             rand_pos = torch.stack([samp_x, samp_y], dim=1)
+
+            # TODO Compute heuristic values for each point in a vectorized manner here?
+
         else:
             angles = torch.linspace(0.0, 2 * torch.pi, steps=max_pts)
             samp_dist_x = horizon * torch.cos(angles)
             samp_dist_y = horizon * torch.sin(angles)
 
         # Sample up to max_pts points
-        # TODO: Might be able to vectorize this
         # t_start = time.time()
         num_samps = 0
         while num_samps < max_pts-1:

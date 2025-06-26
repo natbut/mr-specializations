@@ -2,6 +2,7 @@
 import multiprocessing
 import os
 from collections import defaultdict
+import pandas as pd
 
 import matplotlib.pyplot as plt
 import torch
@@ -244,7 +245,8 @@ def eval(scenario, scenario_configs, env_configs, model_configs, checkpt_fp, sav
     num_heuristics = model_config["num_heuristics"]
     d_feedforward = model_config["d_feedforward"]
     d_model = model_config["d_model"]
-    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, device)
+    agent_attn=model_config["agent_attn"]
+    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, device)
     tf_act.load_state_dict(checkpt_data['actor_state_dict'])
     tf_act.eval()
 
@@ -299,7 +301,8 @@ def train_PPO(scenario,
     num_heuristics = model_config["num_heuristics"]
     d_feedforward = model_config["d_feedforward"]
     d_model = model_config["d_model"]
-    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, device)
+    agent_attn=model_config["agent_attn"]
+    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, device)
     tf_crit, value_module = create_critic(num_features, d_model, device)
 
     print("Running policy:", policy_module(env.reset()))
@@ -506,11 +509,12 @@ def create_env(scenario, device, env_config, scenario_config) -> TransformedEnv:
 
     return env
 
-def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, device):
+def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, device):
     tf_act = EnvironmentTransformer(num_features=num_features,
                                         num_heuristics=num_heuristics,
                                         d_feedforward=d_feedforward,
                                         d_model=d_model,
+                                        agent_attn=agent_attn
                                         ).to(device)
 
     policy_module = TensorDictModule(
@@ -579,6 +583,7 @@ def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rol
         #         logs[f"eval/env0_rob{j}_action{i}"] = eval_rollout["action"]...
         logs["action"] = eval_rollout["action"]
         print("\nAction:\n", logs["action"])
+        save_actions_to_csv(logs["action"], render_fp)
 
         if wandb_mode != None:
             wandb.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})
@@ -589,6 +594,30 @@ def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rol
         del eval_rollout
     env.base_env.render = False
     
+def save_actions_to_csv(actions, filepath):
+    # Flatten B and R into a single axis for CSV format: shape [B*R, F]
+    S, B, R, F = actions.shape
+    actions_flat = actions.reshape(S * B * R, F)
+
+    # Create metadata columns of the same length
+    step_col = [s for s in range(S) for _ in range(B * R)]
+    batch_col = [b for _ in range(S) for b in range(B) for _ in range(R)]
+    robot_col = [r for _ in range(S * B) for r in range(R)]
+
+    # Convert to DataFrame
+    df = pd.DataFrame(actions_flat.cpu().numpy(), columns=[f"f{i}" for i in range(F)])
+    df["step"] = step_col
+    df["batch"] = batch_col
+    df["robot"] = robot_col
+
+    # Reorder columns
+    cols = ["step", "batch", "robot"] + [f"f{i}" for i in range(F)]
+    df = df[cols]
+
+    # Save to CSV using filepath as prefix
+    csv_path = f"{filepath}_actions.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"Saved action tensor to: {csv_path}")
 
 def save_checkpt(checkpt_path, checkpt_data):
     os.makedirs(os.path.dirname(checkpt_path), exist_ok=True)
