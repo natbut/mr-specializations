@@ -325,6 +325,7 @@ class EnvironmentTransformer(nn.Module):
 
         # === Heuristic outputs ===
         vals = self.output_head(decoder_out)
+        vals = vals.reshape(vals.shape[0], -1)
         h_loc, h_scale = self.norm_extractor(vals)
 
         if self.calls % 8000 == 0:

@@ -283,6 +283,7 @@ def train_PPO(scenario,
         resuming = None
         if checkpt_data is not None:
             resuming = "allow"
+        print("RESUMING:", resuming)
         run = wandb.init(
             entity="nlbutler18-oregon-state-university",
             project=project_name,
@@ -369,7 +370,7 @@ def train_PPO(scenario,
             
             # Initial batch data prep for vectorized environment
             data = tensordict_data.flatten(0,1) # Flatten trajectory to fix batching from collector
-            data["sample_log_prob"] = data["sample_log_prob"].sum(dim=-1)#.unsqueeze(-1) # Sum log prob for each agent
+            # data["sample_log_prob"] = data["sample_log_prob"].sum(dim=-1)#.unsqueeze(-1) # Sum log prob for each agent
             # print("\n\nSample log prob:", data["sample_log_prob"][:5])
             
             # We re-compute advantage at each epoch as its value depends on the value
@@ -436,7 +437,11 @@ def train_PPO(scenario,
             wandb.log({"train/advantage_std": data["advantage"].std().item()})
             wandb.log({"train/state_value_mean": data["state_value"].mean().item()}) 
             wandb.log({"train/value_target_mean": data["value_target"].mean().item()})
-            wandb.log({f"actions/rob{j}_action{i}_mean": data["action"][:, j, i].mean().item() for i in range(num_heuristics) for j in range(env.base_env.sim_env.n_agents)})
+            actions = data["action"].view(data["action"].shape[0],
+                                          env.base_env.sim_env.n_agents,
+                                          num_heuristics
+                                          )
+            wandb.log({f"actions/rob{j}_action{i}_mean": actions[:, j, i].mean().item() for i in range(num_heuristics) for j in range(env.base_env.sim_env.n_agents)})
 
         lr_str = f"lr policy: {logs['lr'][-1]: 4.4f}"
         if i % 10 == 0:
@@ -582,8 +587,13 @@ def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rol
         #     for i in range(num_heuristics):
         #         logs[f"eval/env0_rob{j}_action{i}"] = eval_rollout["action"]...
         logs["action"] = eval_rollout["action"]
-        print("\nAction:\n", logs["action"])
-        save_actions_to_csv(logs["action"], render_fp)
+        # actions = eval_rollout["action"].view(rollout_steps,
+        #                                       env.base_env.batch_size[0],
+        #                                       env.base_env.sim_env.n_agents,
+        #                                       len(env.base_env.heuristic_eval_fns)
+        #                                       )
+        print("\nAction:\n", logs["action"]) #logs["action"])
+        # save_actions_to_csv(actions, render_fp)
 
         if wandb_mode != None:
             wandb.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})

@@ -37,6 +37,8 @@ class VMASPlanningEnv(EnvBase):
         self.render_fp = None
         self.count = 0
 
+        self.n_heuristics=6
+
         # TODO Check kwargs passing
         if self.num_envs == 1:
             super().__init__(batch_size=[], device=device)
@@ -150,21 +152,19 @@ class VMASPlanningEnv(EnvBase):
             self.action_spec = Bounded(
                 low=-torch.ones((
                                 self.num_envs,
-                                self.sim_env.n_agents,
-                                n_features
+                                self.sim_env.n_agents * self.n_heuristics
                                 ),
                                 device=device
                                 ),
                 high=torch.ones((
                                 self.num_envs,
-                                self.sim_env.n_agents,
-                                n_features
+                                self.sim_env.n_agents * self.n_heuristics
                                 ),
                                 device=device
                                 ),
-                shape=(self.num_envs, self.sim_env.n_agents, n_features),
+                shape=(self.num_envs, self.sim_env.n_agents * self.n_heuristics),
                 device=device
-            )
+            ) # NOTE ADDED TO HAVE ALL ROBOTS AS ONE TRANSFORMER ACTION
 
             self.reward_spec = Unbounded(
                 shape=(self.num_envs, 1),
@@ -194,8 +194,12 @@ class VMASPlanningEnv(EnvBase):
         """
 
         # Process actions (heuristic weights)
-        # heuristic_weights = actions.view(self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
-        heuristic_weights = actions["action"] # NOTE THESE ARE WEIGHTS FOR EVERY NODE, BUT WE ONLY USE AGENT LOCS
+        heuristic_weights = actions["action"] 
+        heuristic_weights = heuristic_weights.view(
+            heuristic_weights.shape[0],
+            self.sim_env.n_agents,
+            len(self.heuristic_eval_fns)
+        ) # NOTE ADDED TO HAVE ALL ROBOTS AS ONE TRANSFORMER ACTION
         if self.render:
             print(f"\nHeuristic Weights:\n {heuristic_weights} Shape: {heuristic_weights.shape}") # [B, N_AGENTS, N_FEATS]
         # print("WEIGHTS SAMPLE:", heuristic_weights[:5], "shape:", heuristic_weights.shape)
