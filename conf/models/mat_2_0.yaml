@@ -3,3 +3,5 @@ num_features: 6
 num_heuristics: 6
 d_feedforward: 2048
 d_model: 256
+
+agent_attn: False
