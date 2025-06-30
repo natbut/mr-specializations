@@ -185,7 +185,7 @@ class Scenario(BaseScenario):
             elif i < self.max_n_agents_holonomic + self.max_n_agents_diff_drive:
                 agent = PlanningAgent(
                     name=f"diff_drive_{i - self.max_n_agents_holonomic}",
-                    collide=True,
+                    collide=False,
                     color=color,
                     render_action=True,
                     max_speed=0.25,

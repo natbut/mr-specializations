@@ -221,6 +221,7 @@ class PlanningAgent(Agent):
         # Concatenate obs_base position to the list of obstacle positions
         obstacles_pos = torch.cat([
             self.obs["obs_obstacles"][world_idx],
+            self.obs["obs_agents"][world_idx],
             self.obs["obs_base"][world_idx].unsqueeze(0)
         ], dim=0)
         if verbose: 
