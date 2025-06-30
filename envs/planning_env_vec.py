@@ -10,6 +10,8 @@ from vmas.simulator.scenario import BaseScenario
 
 import envs.heuristics
 
+from moviepy import ImageSequenceClip
+
 def load_func(dotpath : str):
     """ load function in module.  function is right-most segment """
     func = dotpath #dotpath.rsplit(".", maxsplit=1)
@@ -255,7 +257,6 @@ class VMASPlanningEnv(EnvBase):
                 break 
             
         if self.render:
-            from moviepy import ImageSequenceClip
             fps = 20
             clip = ImageSequenceClip(frame_list, fps=fps)
             clip.write_gif(f"{self.render_fp}_{self.count}.gif", fps=fps)

@@ -76,7 +76,7 @@ class PlanningAgent(Agent):
                                  heuristic_weights, 
                                  heuristic_eval_fns,
                                  horizon=0.25, 
-                                 max_pts=25,
+                                 max_pts=30,
                                  random_sampling=True,
                                  verbose=False,
                                  ):
@@ -141,7 +141,7 @@ class PlanningAgent(Agent):
             idx_nearest = self._find_nearest_node(V, samp_pos)
             # Compute candidate_pos as a uniform step towards samp_pos from V[idx_nearest]
             direction = samp_pos - V[idx_nearest]
-            step_size = 2*self.shape.radius
+            step_size = 4*self.shape.radius
             norm = torch.norm(direction)
             if norm > step_size:
                 candidate_pos = V[idx_nearest] + direction / norm * step_size
@@ -164,29 +164,33 @@ class PlanningAgent(Agent):
         # t_start = time.time()
 
         # Extract path: find the branch with the min average cost
-        # Compute heuristic value for each node
-        node_vals = []
-        for v in V:
-            val = 0
-            for i, fn in enumerate(heuristic_eval_fns):
-                fn_out = heuristic_weights[world_idx][i] * fn(self.obs, world_idx, v)
-                # print(f"H fn {fn} val out: {fn_out}")
-                val += fn_out
-            node_vals.append(val)
+        # Compute heuristic value for each node'
+        V_tensor = torch.stack(V)  # shape: (num_vertices, 2)
+        # Vectorized heuristic evaluation: each fn returns (num_vertices,) tensor
+        node_vals = torch.zeros(len(V), device=V_tensor.device, dtype=V_tensor.dtype)
+        for i, fn in enumerate(heuristic_eval_fns):
+            # fn(self.obs, world_idx, V_tensor) should return (num_vertices,)
+            h_val = fn(self.obs, world_idx, V_tensor)
+            # print(f"\nFn {fn} sampled h_val: {h_val[:5]}")
+            val = heuristic_weights[world_idx][i] * h_val
+            # print(f"Modded val: {val[:5]}")
+            node_vals += val
+            # print(f"Updated node vals: {node_vals[:5]}")
 
-        # For each leaf node, backtrack to root and sum values along the path
-        leaf_indices = [i for i in range(len(V)) if i not in parents.values()]
+        # Identify leaf nodes (nodes that are not parents of any other node)
+        parent_indices = set(parents.values()) - {None}
+        leaf_indices = [i for i in range(len(V)) if i not in parent_indices]
         best_val = None
         best_path = None
 
-        # Find path with min average cost over nodes in path
+        # For each leaf, backtrack to root and sum node_vals along the path
         for leaf_idx in leaf_indices:
             path = []
             idx = leaf_idx
             cum_val = 0
             while idx is not None:
                 path.append(idx)
-                cum_val += node_vals[idx]
+                cum_val += node_vals[idx].item()
                 idx = parents[idx]
             path = path[::-1]
             avg_val = cum_val / len(path)
@@ -197,6 +201,40 @@ class PlanningAgent(Agent):
         # Build trajectory from best path
         traj = [V[idx] for idx in best_path]
         if verbose: print(f"Backtracked traj (max cumulative value): {traj}")
+
+        
+        # node_vals = []
+        # for v in V:
+        #     val = 0
+        #     for i, fn in enumerate(heuristic_eval_fns):
+        #         fn_out = heuristic_weights[world_idx][i] * fn(self.obs, world_idx, v)
+        #         # print(f"H fn {fn} val out: {fn_out}")
+        #         val += fn_out
+        #     node_vals.append(val)
+
+        # # For each leaf node, backtrack to root and sum values along the path
+        # leaf_indices = [i for i in range(len(V)) if i not in parents.values()]
+        # best_val = None
+        # best_path = None
+
+        # # Find path with min average cost over nodes in path
+        # for leaf_idx in leaf_indices:
+        #     path = []
+        #     idx = leaf_idx
+        #     cum_val = 0
+        #     while idx is not None:
+        #         path.append(idx)
+        #         cum_val += node_vals[idx]
+        #         idx = parents[idx]
+        #     path = path[::-1]
+        #     avg_val = cum_val / len(path)
+        #     if (best_val is None) or (avg_val < best_val):
+        #         best_val = avg_val
+        #         best_path = path
+
+        # # Build trajectory from best path
+        # traj = [V[idx] for idx in best_path]
+        # if verbose: print(f"Backtracked traj (max cumulative value): {traj}")
 
         # print(f"\tHeuristic eval & backtrack path took {time.time() - t_start} s")
         
