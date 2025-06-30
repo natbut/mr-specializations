@@ -19,8 +19,10 @@ def nearest_task(agent_obs, world_idx, sampled_pos):
     mask = torch.any(tasks <= 1.0, dim=-1)
     # print("MASK:", mask)
     tasks = tasks[mask]
-    # print("NEW TASKS:", tasks)
-    return min_dist(tasks, sampled_pos.unsqueeze(0))
+    # print("\nMASKED TASKS:", tasks)
+    # print("SAMPLED POS (:5):", sampled_pos[:5])
+    # print("MIN DIST VALS:", min_dist(sampled_pos, tasks))
+    return min_dist(sampled_pos, tasks)
 
 def nearest_agent(agent_obs, world_idx, sampled_pos):
     """
@@ -39,8 +41,10 @@ def nearest_agent(agent_obs, world_idx, sampled_pos):
     # mask = ~torch.all(agents == sampled_pos, dim=1)
     # print("AGENTS:", agents, "\n CURRENT POS:", sampled_pos, "\nMASK:", mask)
     # agents = agents[mask]
-    # print("AGENTS AFTER MASK:", agents)
-    return min_dist(agents, sampled_pos.unsqueeze(0))
+    # print("\nAGENTS:", agents)
+    # print("SAMPLED POS (:5):", sampled_pos[:5])
+    # print("MIN DIST VALS:", min_dist(sampled_pos, agents))
+    return min_dist(sampled_pos, agents)
 
 def nearest_frontier(agent_obs, world_idx, sampled_pos):
     """
@@ -58,9 +62,10 @@ def nearest_frontier(agent_obs, world_idx, sampled_pos):
         return 0
 
     frontiers = agent_obs["obs_frontiers"][world_idx] # Gets frontiers for corresponding world
-    # print(f"World {world_idx} frontiers: {frontiers}, \n Current Pos: {sampled_pos}, \nMin dist: {min_dist(frontiers, sampled_pos)}")
+    frontiers = frontiers.reshape(-1, 2)
+    # print(f"\nWorld {world_idx} frontiers: {frontiers}, \n Pos: {sampled_pos[:5]}, \nMin dist: {min_dist(sampled_pos, frontiers)}")
     # print("Frontiers min dist:", min_dist(frontiers, sampled_pos))
-    return min_dist(frontiers, sampled_pos.unsqueeze(0))
+    return min_dist(sampled_pos, frontiers)
 
 def nearest_comms_midpt(agent_obs, world_idx, sampled_pos):
     """
@@ -82,7 +87,7 @@ def nearest_comms_midpt(agent_obs, world_idx, sampled_pos):
         agents_midpt = (agents + agents) / 2.0
         comms_midpt = torch.cat((comms_midpt, agents_midpt), dim=0)
 
-    return min_dist(comms_midpt, sampled_pos.unsqueeze(0))
+    return min_dist(sampled_pos, comms_midpt)
 
 def farthest_comms_midpt(agent_obs, world_idx, sampled_pos):
     """
@@ -104,7 +109,7 @@ def farthest_comms_midpt(agent_obs, world_idx, sampled_pos):
         agents_midpt = (agents + agents) / 2.0
         comms_midpt = torch.cat((comms_midpt, agents_midpt), dim=0)
 
-    return max_dist(comms_midpt, sampled_pos.unsqueeze(0))
+    return max_dist(sampled_pos, comms_midpt)
 
 
 def neediest_comms_midpt(agent_obs, world_idx, sampled_pos):
@@ -126,9 +131,10 @@ def neediest_comms_midpt(agent_obs, world_idx, sampled_pos):
     d_max = torch.argmax(dists).item()
     farthest_agent = agents[d_max]
     # print(f"Farthest agent pos is {farthest_agent}")
-    comms_midpt = (farthest_agent + base) / 2.0
-    # print(f"Comms midpt: {comms_midpt}\nVal out: {torch.cdist(comms_midpt.unsqueeze(0), sampled_pos.unsqueeze(0)).item()}")
-    return torch.cdist(comms_midpt.unsqueeze(0), sampled_pos.unsqueeze(0)).item()
+    comms_midpt = ((farthest_agent + base) / 2.0).unsqueeze(0)
+    # print(f"\nNeediest Comms midpt: {comms_midpt}")
+    # print(f"Min dist: {torch.cdist(sampled_pos, comms_midpt)[:5].squeeze(-1)}")
+    return torch.cdist(sampled_pos, comms_midpt).squeeze(-1)
 
 
 def goto_base(agent_obs, world_idx, sampled_pos):
@@ -148,17 +154,23 @@ def goto_base(agent_obs, world_idx, sampled_pos):
     # print("Norm dist to base:", torch.norm(base - sampled_pos, dim=0))
     # print("CDist dist to base:", torch.cdist(base.unsqueeze(0), sampled_pos.unsqueeze(0)))
 
-    return torch.cdist(base.unsqueeze(0), sampled_pos.unsqueeze(0)).item() #torch.norm(base - sampled_pos, dim=0)
+    return torch.cdist(sampled_pos, base.unsqueeze(0)).squeeze(-1) #torch.norm(base - sampled_pos, dim=0)
 
 
 def min_dist(points_a, points_b):
     if len(points_a) == 0 or len(points_b) == 0:
-        return 0.0
-    
-    return torch.min(torch.cdist(points_a, points_b))
+        return torch.zeros(points_a.shape[0], device=points_a.device)
+
+    # Compute pairwise distances: shape (len(points_a), len(points_b))
+    dists = torch.cdist(points_a, points_b)
+    # For each point in points_a, get the min distance to any point in points_b
+    return torch.min(dists, dim=1).values
 
 def max_dist(points_a, points_b):
     if len(points_a) == 0 or len(points_b) == 0:
-        return 0.0
-    
-    return torch.max(torch.cdist(points_a, points_b))
+        return torch.zeros(points_a.shape[0], device=points_a.device)
+
+    # Compute pairwise distances: shape (len(points_a), len(points_b))
+    dists = torch.cdist(points_a, points_b)
+    # For each point in points_a, get the min distance to any point in points_b
+    return torch.max(dists, dim=1).values

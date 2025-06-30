@@ -13,7 +13,7 @@ if __name__ == "__main__":
         "conf/scenarios/comms_0.yaml",
     ]
     env_configs = [
-        "conf/envs/planning_env_explore_1.yaml",
+        "conf/envs/planning_env_explore_3.yaml",
     ]
 
     env = VMASPlanningEnv(Scenario(),
@@ -22,14 +22,14 @@ if __name__ == "__main__":
                             scenario_kwargs=load_yaml_to_kwargs(scenario_configs[0])
                             )
 
-    env.render = True
+    env.render = False
 
     # act = [torch.stack([torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], device="cuda")]) for _ in range(8)]
-    actions = torch.tensor([0.0001, 0.0001, 0.0001, 0.0001, 0.0001, 0.0001], device="cuda")
-    actions = torch.stack([actions for _ in range(5)]) # stack for robots
-    actions[0][0] = 1.0
-    actions[1][3] = 1.0
-    actions[2][2] = 1.0
+    actions = torch.tensor([0.01, 0.0001, 0.01, 0.0001, 0.0001, 0.0001], device="cuda")
+    actions = torch.cat([actions for _ in range(3)]) # cat for robots
+    # actions[0][0] = 1.0
+    # actions[1][3] = 1.0
+    # actions[2][2] = 1.0
     actions = torch.stack([actions for _ in range(8)]) # stack for envs
     
     print("Actions:", actions)
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     # print("\nReset Obs Graph:\n", obs_graph["graph"], "Num graphs:", obs_graph["graph"].num_graphs) #, "\n Graph 0:\n", obs_graph[0])
     # print("\nGraphs to Data list:\n", obs_graph["graph"].to_data_list())
 
-    for i in range(9):
+    for i in range(3):
         print("STEP", i)
         next_tdict= env.step(actions_tdict)
 
