@@ -70,7 +70,7 @@ class PlanningAgent(Agent):
         super().__init__(name, shape, movable, rotatable, collide, density, mass, f_range, max_f, t_range, max_t, v_range, max_speed, color, alpha, obs_range, obs_noise, u_noise, u_range, u_multiplier, action_script, sensors, c_noise, silent, adversary, drag, linear_friction, angular_friction, gravity, collision_filter, render_action, dynamics, action_size, discrete_action_nvec)
     
 
-    def _compute_trajectory_cont(self,
+    def _compute_traj_rrt_paths(self,
                                  world_idx,
                                  current_pos, 
                                  heuristic_weights, 
@@ -88,19 +88,7 @@ class PlanningAgent(Agent):
 
         # Uniform sampling positions
         if random_sampling:
-            # Establish sampling range
-            samp_rng_x = (max(-1.0, min(1.0, current_pos[world_idx][0] - horizon)), 
-                    min(1.0, max(-1.0, current_pos[world_idx][0] + horizon)))
-            samp_rng_y = (max(-1.0, min(1.0, current_pos[world_idx][1] - horizon)), 
-                    min(1.0, max(-1.0, current_pos[world_idx][1] + horizon)))
-            if verbose: print(f"Sampling range from current pos {current_pos[world_idx]}: \nx rng: {samp_rng_x} \ny rng: {samp_rng_y}")
-
-            samp_x = torch.empty(max_pts, dtype=current_pos.dtype, device=current_pos.device).uniform_(samp_rng_x[0], samp_rng_x[1])
-            samp_y = torch.empty(max_pts, dtype=current_pos.dtype, device=current_pos.device).uniform_(samp_rng_y[0], samp_rng_y[1])
-            rand_pos = torch.stack([samp_x, samp_y], dim=1)
-
-            # TODO Compute heuristic values for each point in a vectorized manner here?
-
+            rand_pos =  self._sample_pos_vec(current_pos, world_idx, horizon, max_pts)
         else:
             angles = torch.linspace(0.0, 2 * torch.pi, steps=max_pts)
             samp_dist_x = horizon * torch.cos(angles)
@@ -167,15 +155,7 @@ class PlanningAgent(Agent):
         # Compute heuristic value for each node'
         V_tensor = torch.stack(V)  # shape: (num_vertices, 2)
         # Vectorized heuristic evaluation: each fn returns (num_vertices,) tensor
-        node_vals = torch.zeros(len(V), device=V_tensor.device, dtype=V_tensor.dtype)
-        for i, fn in enumerate(heuristic_eval_fns):
-            # fn(self.obs, world_idx, V_tensor) should return (num_vertices,)
-            h_val = fn(self.obs, world_idx, V_tensor)
-            # print(f"\nFn {fn} sampled h_val: {h_val[:5]}")
-            val = heuristic_weights[world_idx][i] * h_val
-            # print(f"Modded val: {val[:5]}")
-            node_vals += val
-            # print(f"Updated node vals: {node_vals[:5]}")
+        node_vals = self._eval_pt_heuristics_vec(V_tensor, heuristic_eval_fns, heuristic_weights, world_idx)
 
         # Identify leaf nodes (nodes that are not parents of any other node)
         parent_indices = set(parents.values()) - {None}
@@ -201,44 +181,133 @@ class PlanningAgent(Agent):
         # Build trajectory from best path
         traj = [V[idx] for idx in best_path]
         if verbose: print(f"Backtracked traj (max cumulative value): {traj}")
-
-        
-        # node_vals = []
-        # for v in V:
-        #     val = 0
-        #     for i, fn in enumerate(heuristic_eval_fns):
-        #         fn_out = heuristic_weights[world_idx][i] * fn(self.obs, world_idx, v)
-        #         # print(f"H fn {fn} val out: {fn_out}")
-        #         val += fn_out
-        #     node_vals.append(val)
-
-        # # For each leaf node, backtrack to root and sum values along the path
-        # leaf_indices = [i for i in range(len(V)) if i not in parents.values()]
-        # best_val = None
-        # best_path = None
-
-        # # Find path with min average cost over nodes in path
-        # for leaf_idx in leaf_indices:
-        #     path = []
-        #     idx = leaf_idx
-        #     cum_val = 0
-        #     while idx is not None:
-        #         path.append(idx)
-        #         cum_val += node_vals[idx]
-        #         idx = parents[idx]
-        #     path = path[::-1]
-        #     avg_val = cum_val / len(path)
-        #     if (best_val is None) or (avg_val < best_val):
-        #         best_val = avg_val
-        #         best_path = path
-
-        # # Build trajectory from best path
-        # traj = [V[idx] for idx in best_path]
-        # if verbose: print(f"Backtracked traj (max cumulative value): {traj}")
-
-        # print(f"\tHeuristic eval & backtrack path took {time.time() - t_start} s")
         
         return traj
+    
+
+    def _sample_pos_vec(self, current_pos, world_idx, horizon, max_pts, verbose=False):
+        # Establish sampling range
+        samp_rng_x = (max(-1.0, min(1.0, current_pos[world_idx][0] - horizon)), 
+                min(1.0, max(-1.0, current_pos[world_idx][0] + horizon)))
+        samp_rng_y = (max(-1.0, min(1.0, current_pos[world_idx][1] - horizon)), 
+                min(1.0, max(-1.0, current_pos[world_idx][1] + horizon)))
+        if verbose: print(f"Sampling range from current pos {current_pos[world_idx]}: \nx rng: {samp_rng_x} \ny rng: {samp_rng_y}")
+
+        samp_x = torch.empty(max_pts, dtype=current_pos.dtype, device=current_pos.device).uniform_(samp_rng_x[0], samp_rng_x[1])
+        samp_y = torch.empty(max_pts, dtype=current_pos.dtype, device=current_pos.device).uniform_(samp_rng_y[0], samp_rng_y[1])
+        rand_pos = torch.stack([samp_x, samp_y], dim=1)
+
+        return rand_pos
+    
+
+    def _eval_pt_heuristics_vec(self, pts_tensor, heuristic_eval_fns, heuristic_weights, world_idx):
+        node_vals = torch.zeros(pts_tensor.shape[0], device=pts_tensor.device, dtype=pts_tensor.dtype)
+        for i, fn in enumerate(heuristic_eval_fns):
+            # fn(self.obs, world_idx, V_tensor) should return (num_vertices,)
+            h_val = fn(self.obs, world_idx, pts_tensor)
+            # print(f"\nFn {fn} sampled h_val: {h_val[:5]}")
+            val = heuristic_weights[world_idx][i] * h_val
+            # print(f"Modded val: {val[:5]}")
+            node_vals += val
+            # print(f"Updated node vals: {node_vals[:5]}")
+
+        return node_vals
+
+    
+    def _compute_traj_rrt_goals(self,
+                                 world_idx,
+                                 current_pos, 
+                                 heuristic_weights, 
+                                 heuristic_eval_fns,
+                                 horizon=0.25, 
+                                 max_pts=10,
+                                 goal_samp_freq=3,
+                                 verbose=False,
+                                 ):
+
+        # Sample max_pts pts around current position
+        samp_pos = self._sample_pos_vec(current_pos, world_idx, horizon, max_pts)
+
+        # Compute weighted value of each point & extract goal pos
+        samp_vals = self._eval_pt_heuristics_vec(samp_pos, heuristic_eval_fns, heuristic_weights, world_idx)
+        goal_pos_idx = torch.argmin(samp_vals).item()
+        goal_pos = samp_pos[goal_pos_idx]
+
+        # Initialize tree with current position as root
+        V = [current_pos[world_idx].clone()]
+        parents = {0: None}
+        costs = {0: 0}
+
+        # RRT plan to goal pos
+        samp_rng_x = (max(-1.0, min(1.0, current_pos[world_idx][0] - horizon)), 
+            min(1.0, max(-1.0, current_pos[world_idx][0] + horizon)))
+        samp_rng_y = (max(-1.0, min(1.0, current_pos[world_idx][1] - horizon)), 
+            min(1.0, max(-1.0, current_pos[world_idx][1] + horizon)))
+        nearest_pos_to_goal_idx = None
+        nearest_dist_to_goal = torch.inf
+        num_samps = 0
+        while num_samps < max_pts-1:
+            num_samps += 1
+
+            # Sample point within traj horizon, biased towards goal_pos
+            if num_samps % goal_samp_freq == 0:
+                samp_pos = goal_pos
+            else:
+                samp_pos = self._random_pos(samp_rng_x, samp_rng_y, dtype=current_pos.dtype, device=current_pos.device)
+            if verbose: 
+                print(f"Sampled pt: {samp_pos}")
+
+            # Find nearest point in search tree & compute cost
+            idx_nearest = self._find_nearest_node(V, samp_pos)
+            # Compute candidate_pos as a uniform step towards samp_pos from V[idx_nearest]
+            direction = samp_pos - V[idx_nearest]
+            step_size = 2*self.shape.radius
+            norm = torch.norm(direction)
+            if norm > step_size:
+                candidate_pos = V[idx_nearest] + direction / norm * step_size
+            else:
+                candidate_pos = samp_pos
+
+            # Check obstacle-free path
+            if not self._is_path_obstacle_free(V[idx_nearest], candidate_pos, world_idx, num_checks=4):
+                if verbose: print("Point terminated by obstacle")
+                continue
+
+            # Add sampled position to vertices
+            cost_new = costs[idx_nearest] + torch.norm(candidate_pos - V[idx_nearest])
+            parents[len(V)] = idx_nearest
+            costs[len(V)] = cost_new
+            V.append(candidate_pos)
+
+            # Return early if goal reached
+            candidate_dist_to_goal = torch.norm(candidate_pos - goal_pos)
+            if candidate_dist_to_goal < 0.025:
+                # Backtrack traj from candidate_pos
+                traj = []
+                idx = len(V) - 1
+                while idx is not None:
+                    traj.append(V[idx])
+                    idx = parents[idx]
+                traj = traj[::-1]
+                if verbose: print(f"Goal reached. Returning traj: {traj}")
+                return traj
+            # Track nearest pos to goal for early termination
+            elif nearest_pos_to_goal_idx == None or candidate_dist_to_goal < nearest_dist_to_goal:
+                nearest_dist_to_goal = candidate_dist_to_goal
+                nearest_pos_to_goal_idx = len(V)-1
+                if verbose: print(f"Nearest dist to goal: {nearest_dist_to_goal}, Nearest pos idx: {nearest_pos_to_goal_idx}")
+
+        # Else return partial traj (leading closest to goal)
+        traj = []
+        idx = nearest_pos_to_goal_idx
+        while idx is not None:
+            traj.append(V[idx])
+            idx = parents[idx]
+        traj = traj[::-1]
+        if verbose: print(f"Max pts reached. Returning traj: {traj} from idx {idx}")
+        if len(traj) == 0: traj.append(current_pos[world_idx])
+        return traj
+        
     
     # Check for obstacles along the path to best parent
     def _is_path_obstacle_free(self, start, end, world_idx, num_checks=10):
@@ -305,7 +374,7 @@ class PlanningAgent(Agent):
         return best_idx, neighbors
     
 
-    def get_control_action_cont(self, heuristic_weights, heuristic_eval_fns, horizon, verbose=False):
+    def get_control_action_cont(self, heuristic_weights, heuristic_eval_fns, horizon, max_pts, verbose=False):
         """
         Sampling-based search within radius defined by horizon. Observations from environment should
         allow us to evaluate value of each sampled point towards each heuristic.
@@ -323,7 +392,7 @@ class PlanningAgent(Agent):
             if verbose: print("Initializing trajectories...")
             self.traj_idx = []
             for i in range(heuristic_weights.shape[0]):
-                self.trajs.append(self._compute_trajectory_cont(i, current_pos, heuristic_weights, heuristic_eval_fns, horizon, verbose=False))
+                self.trajs.append(self._compute_traj_rrt_goals(i, current_pos, heuristic_weights, heuristic_eval_fns, horizon, max_pts, verbose=False))
                 self.traj_idx.append(0) # start at waypoint 0 for each traj in batch
                 target_waypt.append(self.trajs[i][0])
 
@@ -354,7 +423,7 @@ class PlanningAgent(Agent):
             if flag and old_idx[i] == next_idx[i]:
                 if verbose and i == 0:
                     print(f"AGENT {self.name} COMPLETED TRAJ. Located at {current_pos[i]}. Recomputing...")
-                traj = self._compute_trajectory_cont(i, current_pos, heuristic_weights, heuristic_eval_fns, horizon, verbose=False)
+                traj = self._compute_traj_rrt_goals(i, current_pos, heuristic_weights, heuristic_eval_fns, horizon, max_pts, verbose=False)
                 if verbose and i == 0:
                     print("New traj:", traj)
                 self.trajs[i] = traj

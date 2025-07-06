@@ -353,15 +353,21 @@ class EnvironmentCriticTransformer(nn.Module):
         num_heads=4,
         num_layers=2,
         use_attention_pool=True,
+        cell_pos_as_features=True,
         max_cells=100 # <-- IMPORTANT: Add this to match your padding size
     ):
         super().__init__()
         self.d_model = d_model
         self.use_attention_pool = use_attention_pool
         self.max_cells = max_cells # Store max_cells
+        self.cell_pos_as_features = cell_pos_as_features
 
-        self.feature_embed = nn.Linear(num_features, d_model)
-        self.pos_embed = PositionalEncoding(d_model)
+        # Embeddings
+        if self.cell_pos_as_features:
+            self.feature_embed = nn.Linear(num_features+2, d_model)
+        else:
+            self.feature_embed = nn.Linear(num_features, d_model)
+            self.pos_embed = PositionalEncoding(d_model)
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=num_heads, batch_first=True
@@ -395,9 +401,16 @@ class EnvironmentCriticTransformer(nn.Module):
         mask = torch.arange(N_padded, device=cell_feats.device).expand(B, N_padded) >= num_cells.unsqueeze(1)
         # True means masked (ignored)
 
-        feat_emb = self.feature_embed(cell_feats)       # [B, N_padded, D]
-        pos_emb = self.pos_embed(cell_pos)       # [B, N_padded, D]
-        x = feat_emb + pos_emb
+         # === Encoder input ===
+        if self.cell_pos_as_features:
+            cell_feats_with_pos = torch.cat([cell_feats, cell_pos], dim=-1)
+            # print("\nSampled Features:", cell_feats_with_pos[0][:5])
+            x_feat = self.feature_embed(cell_feats_with_pos)
+            x = x_feat
+        else:
+            x_feat = self.feature_embed(cell_feats)       # [B, N_padded, D]
+            x_pos = self.pos_embed(cell_pos) # Use the linear embedding for positions
+            x = x_feat + x_pos
 
         # Pass the mask to the encoder
         enc_out = self.encoder(x, src_key_padding_mask=mask) # [B, N_padded, D]
