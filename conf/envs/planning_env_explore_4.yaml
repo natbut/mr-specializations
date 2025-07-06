@@ -3,8 +3,8 @@ num_envs: 8
 
 max_steps: 1024
 macro_step: 128
-horizon: 0.25
-planning_pts: 30
+horizon: 0.1
+planning_pts: 10
 
 heuristic_fns:
 - nearest_task

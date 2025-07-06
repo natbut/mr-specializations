@@ -53,4 +53,4 @@ if __name__ == "__main__":
             rollout_steps=steps_per_rollout,
             )
         
-#  python eval.py "conf/scenarios/exploring_0.yaml" "conf/envs/planning_env_explore_1.yaml" "conf/models/mat_9.yaml" "runs\exploring_0_planning_env_explore_1_ppo_4_0_mat_9\checkpoints\best.pt" "eval_test" 1 8 
+#  python eval.py "conf/scenarios/comms_0.yaml" "conf/envs/planning_env_explore_2.yaml" "conf/models/mat_2_0.yaml" "runs\comms_0_planning_env_explore_2_ppo_4_2_flatAct_mat_2_0\checkpoints\best.pt" "eval_test" 1 8

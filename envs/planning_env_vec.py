@@ -33,6 +33,7 @@ class VMASPlanningEnv(EnvBase):
         self.heuristic_eval_fns = [load_func(name) for name in self.heuristic_eval_fns]
         self.num_envs = env_kwargs.pop("num_envs", 1)
         self.horizon = env_kwargs.pop("horizon", 0.25)
+        self.planning_pts = env_kwargs.pop("planning_pts", 30)
         self.macro_step = env_kwargs.pop("macro_step", 10) # Number of sub-steps to execute per step 
         self.render = env_kwargs.pop("render", False)
 
@@ -225,7 +226,7 @@ class VMASPlanningEnv(EnvBase):
             i = 0
             for agent in self.sim_env.agents:
                 if agent.is_active:
-                    u_action.append(agent.get_control_action_cont(heuristic_weights[:,i,:], self.heuristic_eval_fns, self.horizon, verbose
+                    u_action.append(agent.get_control_action_cont(heuristic_weights[:,i,:], self.heuristic_eval_fns, self.horizon, self.planning_pts, verbose
                                                                 )) # get next actions from agent controllers
                     i += 1
                 else:

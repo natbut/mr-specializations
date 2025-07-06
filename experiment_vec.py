@@ -303,8 +303,9 @@ def train_PPO(scenario,
     d_feedforward = model_config["d_feedforward"]
     d_model = model_config["d_model"]
     agent_attn=model_config["agent_attn"]
-    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, device)
-    tf_crit, value_module = create_critic(num_features, d_model, device)
+    cell_pos_as_features=model_config["cell_pos_as_features"]
+    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, device)
+    tf_crit, value_module = create_critic(num_features, d_model, cell_pos_as_features, device)
 
     print("Running policy:", policy_module(env.reset()))
     print("Running value:", value_module(env.reset())) # NOTE leave this in to init lazy modules
@@ -411,6 +412,7 @@ def train_PPO(scenario,
                     wandb.log({"train/loss_objective": loss_vals["loss_objective"].item()})
                     wandb.log({"train/loss_critic": loss_vals["loss_critic"].item()})
                     wandb.log({"train/loss_entropy": loss_vals["loss_entropy"].item()})
+                    wandb.log({"train/entropy": loss_vals["entropy"].item()})
                 # wandb.log({"train/value_clip_fraction": loss_vals["value_clip_fraction"].item()})
                 # Optimization: backward, grad clipping and optimization step
                 loss_value.backward()
@@ -514,12 +516,13 @@ def create_env(scenario, device, env_config, scenario_config) -> TransformedEnv:
 
     return env
 
-def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, device):
+def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, device):
     tf_act = EnvironmentTransformer(num_features=num_features,
                                         num_heuristics=num_heuristics,
                                         d_feedforward=d_feedforward,
                                         d_model=d_model,
-                                        agent_attn=agent_attn
+                                        agent_attn=agent_attn,
+                                        cell_pos_as_features=cell_pos_as_features,
                                         ).to(device)
 
     policy_module = TensorDictModule(
@@ -543,10 +546,11 @@ def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agen
 
     return tf_act, policy_module
 
-def create_critic(num_features, d_model, device):
+def create_critic(num_features, d_model, cell_pos_as_features, device):
     tf_crit = EnvironmentCriticTransformer(num_features=num_features,
                                             d_model=d_model,
                                             use_attention_pool=True,
+                                            cell_pos_as_features=cell_pos_as_features,
                                             ).to(device)
 
     value_module = ValueOperator(
@@ -587,7 +591,7 @@ def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rol
         #     for i in range(num_heuristics):
         #         logs[f"eval/env0_rob{j}_action{i}"] = eval_rollout["action"]...
         logs["action"] = eval_rollout["action"]
-        # actions = eval_rollout["action"].view(rollout_steps,
+        # actions = logs["action"].view(rollout_steps,
         #                                       env.base_env.batch_size[0],
         #                                       env.base_env.sim_env.n_agents,
         #                                       len(env.base_env.heuristic_eval_fns)

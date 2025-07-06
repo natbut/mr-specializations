@@ -22,7 +22,7 @@ if __name__ == "__main__":
                             scenario_kwargs=load_yaml_to_kwargs(scenario_configs[0])
                             )
 
-    env.render = False
+    env.render = True
 
     # act = [torch.stack([torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], device="cuda")]) for _ in range(8)]
     actions = torch.tensor([0.01, 0.0001, 0.01, 0.0001, 0.0001, 0.0001], device="cuda")
