@@ -10,10 +10,10 @@ from experiment_vec import load_yaml_to_kwargs
 if __name__ == "__main__":
     
     scenario_configs = [
-        "conf/scenarios/comms_0.yaml",
+        "conf/scenarios/comms_1.yaml",
     ]
     env_configs = [
-        "conf/envs/planning_env_explore_3.yaml",
+        "conf/envs/planning_env_explore_4.yaml",
     ]
 
     env = VMASPlanningEnv(Scenario(),

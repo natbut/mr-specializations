@@ -115,6 +115,10 @@ class Scenario(BaseScenario):
         self.variable_team_size = kwargs.pop(
             "variable_team_size", False
         )
+
+        self.rich_cell_features = kwargs.pop(
+            "rich_cell_features", False
+        )
         
         self.min_collision_distance = (
             0.005  # Minimum distance between entities for collision trigger
@@ -375,7 +379,10 @@ class Scenario(BaseScenario):
         self.frontiers = self._get_frontier_pts()
         
         # UPDATE DISCRETE CELL FEATURES
-        self._updated_discrete_cell_features() 
+        if self.rich_cell_features:
+            self._update_cell_features_rich()
+        else:
+            self._update_discrete_cell_features() 
 
     def reward(self, agent: Agent):
         is_first = agent == self.world.agents[0]
@@ -476,7 +483,10 @@ class Scenario(BaseScenario):
                 self.frontiers = self._get_frontier_pts()
                 
                 # == UPDATE DISCRETE CELL FEATURES ==
-                self._updated_discrete_cell_features()    
+                if self.rich_cell_features:
+                    self._update_cell_features_rich()
+                else:
+                    self._update_discrete_cell_features()    
 
         tasks_reward = (
             self.shared_tasks_rew if self.shared_rew else agent.tasks_rew
@@ -509,7 +519,7 @@ class Scenario(BaseScenario):
             self.stored_explored_cell_centers[b, ids] = self.discrete_cell_centers[b, ids]
         
 
-    def _updated_discrete_cell_features(self):
+    def _update_discrete_cell_features(self):
         # For each cell, compute features:
         # 0: tasks per cell
         # 1: obstacles per cell
@@ -590,6 +600,145 @@ class Scenario(BaseScenario):
             ]
         if self.comms_rew_decay_drop != None:
             features.append(base_per_cell)
+        self.discrete_cell_features = torch.stack(
+            features,
+            dim=-1,
+        )  # [B, N_cells, 5]
+        
+        # print("Discrete features:", self.discrete_cell_features)
+
+    def _update_cell_features_rich(self):
+        # For each cell, compute features:
+        # 0: 1/Dist to base (or 1 if base in cell)
+        # 1: 1/Dist to nearest task (or 1 if task(s) are in cell)
+        # 2: 1/Dist to nearest obstacle (or 1 if obstacle(s) are in cell)
+        # 3: 1/Dist to nearest agent (or 1 if agent(s) in cell)
+        # 4: % frontiers per cell (0.0 to 1.0)
+        # 5: explored (bool)
+
+        # [B, N_cells, 2]
+        cell_centers = self.discrete_cell_centers
+        B, N_cells, _ = cell_centers.shape
+        max_dist = 2.0 * self.world.x_semidim # Max dist for norm
+        
+        # Base per cell
+        base_pos = torch.stack([self.base.state.pos], dim=1)  # [B, 1, 2]
+        # Compute Euclidean distance from each cell center to base position
+        dists = torch.norm(cell_centers - base_pos.squeeze(1).unsqueeze(1), dim=-1)  # [B, N_cells]
+        # Normalize so that 0 distance -> 1, distance >= 1 -> 0 (clip to [0,1])
+        base_dist_per_cell = 1.0 - (torch.clamp(dists, 0, max_dist) / max_dist)
+        # If base is in cell, set the value to 1
+        base_in_cell = (
+            (cell_centers.unsqueeze(2) - base_pos.unsqueeze(1)).abs() <= self.discrete_resolution / 2
+        ).all(dim=-1).squeeze(-1)  # [B, N_cells]
+        base_dist_per_cell = torch.where(base_in_cell, torch.ones_like(base_dist_per_cell), base_dist_per_cell)
+
+        print("Base dist per cell (0):", base_dist_per_cell[0], "\n shape:", base_dist_per_cell.shape)
+
+
+        # Tasks per cell (rich feature: 1-dist to nearest active task, or 1.0 if task is in cell)
+        tasks_pos = self.tasks_pos  # [B, N_tasks, 2]
+        active_tasks_mask = ~self.stored_tasks  # [B, N_tasks]
+
+        # If there are no tasks or no active tasks, set to 0
+        if tasks_pos.shape[1] == 0 or not active_tasks_mask.any():
+            task_dist_per_cell = torch.zeros((B, N_cells), device=cell_centers.device)
+        else:
+            # Mask out stored tasks by setting their positions far away
+            masked_tasks_pos = tasks_pos.clone()
+            far_away = 10.0
+            for b in range(B):
+                # Set stored (inactive) tasks to far away so they don't affect min distance
+                masked_tasks_pos[b][~active_tasks_mask[b]] = far_away
+
+                # Compute distances to all (masked) tasks
+                dists = torch.norm(cell_centers.unsqueeze(2) - masked_tasks_pos.unsqueeze(1), dim=-1)  # [B, N_cells, N_tasks]
+                min_dists, _ = dists.min(dim=-1)  # [B, N_cells]
+
+                # Check if any active task is in the cell (distance <= half cell width)
+                tasks_in_cell = (
+                (cell_centers.unsqueeze(2) - masked_tasks_pos.unsqueeze(1)).abs() <= self.discrete_resolution / 2
+                ).all(dim=-1)  # [B, N_cells, N_tasks]
+                any_task_in_cell = tasks_in_cell.any(dim=-1)  # [B, N_cells]
+
+                # Assign 1.0 if a task is in the cell, else 1.0 - min_dist (clipped to [0,1])
+                task_dist_per_cell = torch.where(
+                any_task_in_cell,
+                torch.ones_like(min_dists),
+                torch.clamp(1.0 - (min_dists/max_dist), min=0.0, max=max_dist)
+                )
+
+        print("Task dist per cell (0):", task_dist_per_cell[0], "\n shape:", task_dist_per_cell.shape)
+
+        # Obstacles per cell
+        obstacles_pos = torch.stack([o.state.pos for o in self.obstacles], dim=1)  # [B, N_obstacles, 2]
+        dists = torch.norm(cell_centers.unsqueeze(2) - obstacles_pos.unsqueeze(1), dim=-1)
+        min_dists, _ = dists.min(dim=-1)  # [B, N_cells]
+        obstacles_in_cell = (
+            (cell_centers.unsqueeze(2) - obstacles_pos.unsqueeze(1)).abs() <= self.discrete_resolution / 2
+        ).all(dim=-1)  # [B, N_cells, N_obstacles]
+        any_obstacle_in_cell = obstacles_in_cell.any(dim=-1)  # [B, N_cells]
+        obstacles_dist_per_cell = torch.where(
+            any_obstacle_in_cell,
+            torch.ones_like(min_dists),
+            torch.clamp(1.0 - (min_dists/max_dist), min=0.0, max=max_dist)
+        )  # [B, N_cells]
+
+        print("Obs  dist per cell (0):", obstacles_dist_per_cell[0], "\n shape:", obstacles_dist_per_cell.shape)
+
+        # Agents per cell
+        agents_pos = self.agents_pos  # [B, N_agents, 2]
+        dists = torch.norm(cell_centers.unsqueeze(2) - agents_pos.unsqueeze(1), dim=-1)
+        min_dists, _ = dists.min(dim=-1)  # [B, N_cells]
+        agents_in_cell = (
+            (cell_centers.unsqueeze(2) - agents_pos.unsqueeze(1)).abs() <= self.discrete_resolution / 2
+        ).all(dim=-1)  # [B, N_cells, N_obstacles]
+        any_agent_in_cell = agents_in_cell.any(dim=-1)  # [B, N_cells]
+        agents_dist_per_cell = torch.where(
+            any_agent_in_cell,
+            torch.ones_like(min_dists),
+            torch.clamp(1.0 - (min_dists/max_dist), min=0.0, max=max_dist)
+        )  # [B, N_cells]
+
+        print("Agents dist per cell (0):", agents_dist_per_cell[0], "\n shape:", agents_dist_per_cell.shape)
+
+        # Frontiers per cell: number of neighbors that are not explored
+        # Use candidate_frontiers and discrete_cell_explored
+        # TODO
+        frontiers_per_cell = torch.zeros((B, N_cells), device=cell_centers.device)
+        for b in range(B):
+            # For each cell, check if each neighbor is explored
+            neighbors = self.candidate_frontiers[b]  # [N_cells, 4, 2]
+            # For each neighbor, check if its center is in the explored set
+            explored_centers = self.discrete_cell_centers[b][self.discrete_cell_explored[b]]  # [N_explored, 2]
+            if explored_centers.shape[0] == 0:
+                unexplored_neighbors = torch.ones((N_cells, 4), device=cell_centers.device)
+            else:
+                # [N_cells, 4, 2] - [N_explored, 2] -> [N_cells, 4, N_explored, 2]
+                diff = neighbors.unsqueeze(2) - explored_centers.unsqueeze(0).unsqueeze(0)
+                is_close = torch.isclose(diff, torch.zeros_like(diff), atol=1e-6)
+                is_explored = torch.all(is_close, dim=-1).any(dim=-1)  # [N_cells, 4]
+                unexplored_neighbors = (~is_explored).float()
+            frontiers_per_cell[b] = unexplored_neighbors.sum(dim=-1) / 4.0 # Normalize by max possible frontiers (4 neighbors)
+
+        print("Frontiers per cell (0):", frontiers_per_cell[0], "\n shape:", frontiers_per_cell.shape)
+
+        # Explored (bool)
+        explored = self.discrete_cell_explored.float()  # [B, N_cells]
+
+        # print("Explored (0):", explored[0], "\n shape:", explored.shape)
+
+        # Stack features into last dimension
+        features = [
+                task_dist_per_cell,
+                obstacles_dist_per_cell,
+                agents_dist_per_cell,
+                frontiers_per_cell,
+                explored,
+            ]
+        # Add base distance feature if base is relevant to scenario config
+        if self.comms_rew_decay_drop != None:
+            features.append(base_dist_per_cell)
         self.discrete_cell_features = torch.stack(
             features,
             dim=-1,
