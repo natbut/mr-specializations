@@ -119,6 +119,10 @@ class Scenario(BaseScenario):
         self.rich_cell_features = kwargs.pop(
             "rich_cell_features", False
         )
+
+        self.spawn_tasks_burst = kwargs.pop(
+            "spawn_tasks_burst", False
+        )
         
         self.min_collision_distance = (
             0.005  # Minimum distance between entities for collision trigger
@@ -382,7 +386,7 @@ class Scenario(BaseScenario):
         if self.rich_cell_features:
             self._update_cell_features_rich()
         else:
-            self._update_discrete_cell_features() 
+            self._update_cell_features_sparse() 
 
     def reward(self, agent: Agent):
         is_first = agent == self.world.agents[0]
@@ -423,70 +427,21 @@ class Scenario(BaseScenario):
             # agents_cell_dists = torch.min(torch.cdist(self.discrete_cell_centers, self.agents_pos), dim=-1).values # for each cell, dist to each agent
             # print("\nAgents cell dists:", agents_cell_dists, " Shape:", agents_cell_dists.shape)
 
+            # == UPDATE CELL EXPLORATION STATUS == 
             self._update_exploration()
+
+            # == SPAWN IN STORED TASKS (random) ==
+            if not self.spawn_tasks_burst:
+                self.spawn_tasks()
+
+            # == UPDATE FRONTIERS ==
+            self.frontiers = self._get_frontier_pts()
             
-            explored_cell_centers = [self.discrete_cell_centers[b, ids] for b, ids in enumerate(self.explored_cell_ids)]
-
-            occupied_positions_agents = [self.agents_pos]
-            for i, task in enumerate(self.tasks):
-                
-                occupied_positions_tasks = [
-                                            o.state.pos.unsqueeze(1)
-                                            for o in self.tasks
-                                            if o is not task
-                                            ]
-                occupied_positions = torch.cat(
-                    occupied_positions_agents + occupied_positions_tasks,
-                    dim=1,
-                )
-
-                # == MOVE COMPLETED TASKS OUT OF BOUNDS (TO STORAGE) ==
-                if self.completed_tasks[:, i].any():
-                    # print("COMPLETED TASKS\nTask state pos:", task.state.pos)
-                    # print("Completed tasks:", self.completed_tasks)
-                    # print("Completed tasks[:,i]:", self.completed_tasks[:, i])
-                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[0].clone()
-                
-                # == SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY) ==
-                    # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
-                for idx in range(self.world.batch_dim):
-                    spawn_prob = self.tasks_respawn_rate * len(explored_cell_centers[idx])
-                    # print("Spawn prob:", spawn_prob)
-                    if self.stored_tasks[idx,i].any() and np.random.random() < spawn_prob:
-                        # print("Spawning task", i, " in world", idx)
-                        spawn_pos = []
-                        rand_cell_idx = torch.randint(explored_cell_centers[idx].shape[0], (1,)).item()
-                        rand_cell_center = explored_cell_centers[idx][rand_cell_idx].tolist()
-                        # print("\nRand cell center:", rand_cell_center)
-
-                        rand_pos = ScenarioUtils.find_random_pos_for_entity(
-                            occupied_positions[idx],
-                            env_index=idx,
-                            world=self.world,
-                            min_dist_between_entities=self.min_distance_between_entities,
-                            x_bounds=(rand_cell_center[0]-self.discrete_resolution/2,
-                                    rand_cell_center[0]+self.discrete_resolution/2),
-                            y_bounds=(rand_cell_center[1]-self.discrete_resolution/2,
-                                    rand_cell_center[1]+self.discrete_resolution/2),
-                        )
-                        # print("Rand pos selected:", rand_pos)
-                        spawn_pos.append(rand_pos)
-
-                        spawn_pos = torch.stack(spawn_pos)
-                        # print("Initial task state pos:", task.state.pos)
-                        # print("Spawn pos:", spawn_pos)
-                        task.state.pos[idx] = spawn_pos
-                        self.stored_tasks[idx, i] = False
-                        # print("Updated task state pos:", task.state.pos)
-
-                # == UPDATE FRONTIERS ==
-                self.frontiers = self._get_frontier_pts()
-                
-                # == UPDATE DISCRETE CELL FEATURES ==
-                if self.rich_cell_features:
-                    self._update_cell_features_rich()
-                else:
-                    self._update_discrete_cell_features()    
+            # == UPDATE DISCRETE CELL FEATURES ==
+            if self.rich_cell_features:
+                self._update_cell_features_rich()
+            else:
+                self._update_cell_features_sparse()    
 
         tasks_reward = (
             self.shared_tasks_rew if self.shared_rew else agent.tasks_rew
@@ -519,7 +474,7 @@ class Scenario(BaseScenario):
             self.stored_explored_cell_centers[b, ids] = self.discrete_cell_centers[b, ids]
         
 
-    def _update_discrete_cell_features(self):
+    def _update_cell_features_sparse(self):
         # For each cell, compute features:
         # 0: tasks per cell
         # 1: obstacles per cell
@@ -633,7 +588,7 @@ class Scenario(BaseScenario):
         ).all(dim=-1).squeeze(-1)  # [B, N_cells]
         base_dist_per_cell = torch.where(base_in_cell, torch.ones_like(base_dist_per_cell), base_dist_per_cell)
 
-        print("Base dist per cell (0):", base_dist_per_cell[0], "\n shape:", base_dist_per_cell.shape)
+        # print("Base dist per cell (0):", base_dist_per_cell[0], "\n shape:", base_dist_per_cell.shape)
 
 
         # Tasks per cell (rich feature: 1-dist to nearest active task, or 1.0 if task is in cell)
@@ -668,7 +623,7 @@ class Scenario(BaseScenario):
                 torch.clamp(1.0 - (min_dists/max_dist), min=0.0, max=max_dist)
                 )
 
-        print("Task dist per cell (0):", task_dist_per_cell[0], "\n shape:", task_dist_per_cell.shape)
+        # print("Task dist per cell (0):", task_dist_per_cell[0], "\n shape:", task_dist_per_cell.shape)
 
         # Obstacles per cell
         obstacles_pos = torch.stack([o.state.pos for o in self.obstacles], dim=1)  # [B, N_obstacles, 2]
@@ -684,7 +639,7 @@ class Scenario(BaseScenario):
             torch.clamp(1.0 - (min_dists/max_dist), min=0.0, max=max_dist)
         )  # [B, N_cells]
 
-        print("Obs  dist per cell (0):", obstacles_dist_per_cell[0], "\n shape:", obstacles_dist_per_cell.shape)
+        # print("Obs  dist per cell (0):", obstacles_dist_per_cell[0], "\n shape:", obstacles_dist_per_cell.shape)
 
         # Agents per cell
         agents_pos = self.agents_pos  # [B, N_agents, 2]
@@ -700,7 +655,7 @@ class Scenario(BaseScenario):
             torch.clamp(1.0 - (min_dists/max_dist), min=0.0, max=max_dist)
         )  # [B, N_cells]
 
-        print("Agents dist per cell (0):", agents_dist_per_cell[0], "\n shape:", agents_dist_per_cell.shape)
+        # print("Agents dist per cell (0):", agents_dist_per_cell[0], "\n shape:", agents_dist_per_cell.shape)
 
         # Frontiers per cell: number of neighbors that are not explored
         # Use candidate_frontiers and discrete_cell_explored
@@ -721,7 +676,7 @@ class Scenario(BaseScenario):
                 unexplored_neighbors = (~is_explored).float()
             frontiers_per_cell[b] = unexplored_neighbors.sum(dim=-1) / 4.0 # Normalize by max possible frontiers (4 neighbors)
 
-        print("Frontiers per cell (0):", frontiers_per_cell[0], "\n shape:", frontiers_per_cell.shape)
+        # print("Frontiers per cell (0):", frontiers_per_cell[0], "\n shape:", frontiers_per_cell.shape)
 
         # Explored (bool)
         explored = self.discrete_cell_explored.float()  # [B, N_cells]
@@ -967,6 +922,57 @@ class Scenario(BaseScenario):
         }
 
         return global_obs
+    
+    def spawn_tasks(self, attempts=1, verbose=False):
+        explored_cell_centers = [self.discrete_cell_centers[b, ids] for b, ids in enumerate(self.explored_cell_ids)]
+        occupied_positions_agents = [self.agents_pos]
+
+        for _ in range(attempts):
+            for i, task in enumerate(self.tasks):
+                
+                occupied_positions_tasks = [
+                                            o.state.pos.unsqueeze(1)
+                                            for o in self.tasks
+                                            if o is not task
+                                            ]
+                occupied_positions = torch.cat(
+                    occupied_positions_agents + occupied_positions_tasks,
+                    dim=1,
+                )
+
+                # == MOVE COMPLETED TASKS OUT OF BOUNDS (TO STORAGE) ==
+                if self.completed_tasks[:, i].any():
+                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[0].clone()
+                
+                # == SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY) ==
+                    # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
+                for idx in range(self.world.batch_dim):
+                    spawn_prob = self.tasks_respawn_rate * len(explored_cell_centers[idx])
+                    if verbose: print("Spawn prob:", spawn_prob)
+                    if self.stored_tasks[idx,i].any() and np.random.random() < spawn_prob:
+                        if verbose: print("Spawning task", i, " in world", idx)
+                        spawn_pos = []
+                        rand_cell_idx = torch.randint(explored_cell_centers[idx].shape[0], (1,)).item()
+                        rand_cell_center = explored_cell_centers[idx][rand_cell_idx].tolist()
+                        if verbose: print("\nRand cell center:", rand_cell_center)
+
+                        rand_pos = ScenarioUtils.find_random_pos_for_entity(
+                            occupied_positions[idx],
+                            env_index=idx,
+                            world=self.world,
+                            min_dist_between_entities=self.min_distance_between_entities,
+                            x_bounds=(rand_cell_center[0]-self.discrete_resolution/2,
+                                    rand_cell_center[0]+self.discrete_resolution/2),
+                            y_bounds=(rand_cell_center[1]-self.discrete_resolution/2,
+                                    rand_cell_center[1]+self.discrete_resolution/2),
+                        )
+                        spawn_pos.append(rand_pos)
+
+                        spawn_pos = torch.stack(spawn_pos)
+                        if verbose: print("Spawn pos:", spawn_pos)
+                        task.state.pos[idx] = spawn_pos
+                        self.stored_tasks[idx, i] = False
+
 
     def done(self) -> Tensor:
         # print("Completed tasks:", self.completed_tasks)

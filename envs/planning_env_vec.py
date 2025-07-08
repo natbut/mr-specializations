@@ -37,6 +37,8 @@ class VMASPlanningEnv(EnvBase):
         self.macro_step = env_kwargs.pop("macro_step", 10) # Number of sub-steps to execute per step 
         self.render = env_kwargs.pop("render", False)
 
+        self.use_softmax = False
+
         self.render_fp = None
         self.count = 0
 
@@ -202,7 +204,9 @@ class VMASPlanningEnv(EnvBase):
             heuristic_weights.shape[0],
             self.sim_env.n_agents,
             len(self.heuristic_eval_fns)
-        ) # NOTE ADDED TO HAVE ALL ROBOTS AS ONE TRANSFORMER ACTION
+        ) # Breaks weights apart per-robot
+        if self.use_softmax:
+            heuristic_weights = torch.softmax(heuristic_weights, dim=-1)
         if self.render:
             print(f"\nHeuristic Weights:\n {heuristic_weights} Shape: {heuristic_weights.shape}") # [B, N_AGENTS, N_FEATS]
         # print("WEIGHTS SAMPLE:", heuristic_weights[:5], "shape:", heuristic_weights.shape)
@@ -234,7 +238,9 @@ class VMASPlanningEnv(EnvBase):
             # print(f"Planing took {time.time() - t_start} s")
             # t_start = time.time()
             # print("U-ACTION:", u_action)
-            sim_obs, rews, dones, info = self.sim_env.step(u_action)
+            if t == self.macro_step-1 and self.sim_env.scenario.spawn_tasks_burst:
+                self.sim_env.scenario.spawn_tasks(attempts=self.macro_step)
+            sim_obs, rews, dones, _ = self.sim_env.step(u_action)
             # print(f"Step took {time.time() - t_start} s")
             # print("Rewards:", rewards, "stacked rews:", rews, "sum:", rews.sum(dim=0))
 

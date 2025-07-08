@@ -59,7 +59,7 @@ if __name__ == "__main__":
     
     # python train.py "conf/scenarios/comms_0.yaml" "conf/envs/planning_env_explore_1.yaml" "conf/algos/ppo_4_0.yaml" "conf/models/mat_2_0.yaml" "TRAIN" "mothership-complex"
     
-    # python train.py "conf/scenarios/exploring_0.yaml" "conf/envs/planning_env_explore_1.yaml" "conf/algos/ppo_4_0.yaml" "conf/models/mat_9.yaml" "runs\exploring_0_planning_env_explore_1_ppo_4_0_mat_9\checkpoints\best.pt" "TRAIN" "mothership-complex"
+    # python train.py "conf/scenarios/comms_1.yaml" "conf/envs/planning_env_explore_4.yaml" "conf/algos/ppo_4_6.yaml" "conf/models/mat_2_2.yaml" "None" "TRAIN" "mothership-complex"
 
     # stats = pstats.Stats(pr)
     # stats.sort_stats(pstats.SortKey.TIME)

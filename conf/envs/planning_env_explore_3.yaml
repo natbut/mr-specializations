@@ -1,8 +1,8 @@
 
-num_envs: 8
+num_envs: 16
 
 max_steps: 1024
-macro_step: 128
+macro_step: 64
 horizon: 0.5
 
 heuristic_fns:
