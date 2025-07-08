@@ -1,0 +1,17 @@
+
+# PPO config file
+# NOTE: File is same as ppo_4_2. Change is in action handling.
+
+lr: 0.0001
+max_grad_norm: 1.0
+
+frames_per_batch: 4096 # training batch size
+total_frames: 1000000 # total frames collected
+
+sub_batch_size: 512  # cardinality of the sub-samples gathered from the current data in the inner loop
+num_epochs: 8  # optimization steps per batch of data collected
+clip_epsilon: 0.2  # clip value for PPO loss: see the equation in the intro for more context.
+
+gamma: 0.99
+lambda: 0.80
+entropy_eps: 0.01

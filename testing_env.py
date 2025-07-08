@@ -10,7 +10,7 @@ from experiment_vec import load_yaml_to_kwargs
 if __name__ == "__main__":
     
     scenario_configs = [
-        "conf/scenarios/comms_1.yaml",
+        "conf/scenarios/comms_2.yaml",
     ]
     env_configs = [
         "conf/envs/planning_env_explore_4.yaml",
@@ -25,7 +25,7 @@ if __name__ == "__main__":
     env.render = True
 
     # act = [torch.stack([torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], device="cuda")]) for _ in range(8)]
-    actions = torch.tensor([0.01, 0.0001, 0.01, 0.0001, 0.0001, 0.0001], device="cuda")
+    actions = torch.tensor([0.1, 0.0001, 0.01, 0.0001, 0.0001, 0.0001], device="cuda")
     actions = torch.cat([actions for _ in range(3)]) # cat for robots
     # actions[0][0] = 1.0
     # actions[1][3] = 1.0

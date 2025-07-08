@@ -191,6 +191,7 @@ def train(scenario,
         gamma = rl_config["gamma"]
         lmbda = rl_config["lambda"]
         entropy_eps = rl_config["entropy_eps"]
+        decay_entropy = rl_config.get("decay_entropy", False)
 
         # SET UP DATA LOGS #
         scen_name = scenario_configs[test].split('/')[-1].split('.')[0]
@@ -215,6 +216,7 @@ def train(scenario,
                   lmbda,
                   max_grad_norm,
                   entropy_eps,
+                  decay_entropy,
                   clip_epsilon,
                   test_folder_path,
                   test_name,
@@ -270,6 +272,7 @@ def train_PPO(scenario,
               lmbda,
               max_grad_norm,
               entropy_eps,
+              decay_entropy,
               clip_epsilon,
               test_folder_path,
               test_name,
@@ -278,6 +281,8 @@ def train_PPO(scenario,
               checkpt_data=None,
               ):
     
+    entropy_decay_rate = entropy_eps / total_frames
+
     ### INIT WANDB ###
     if wandb_mode=="TRAIN":
         resuming = None
@@ -306,6 +311,10 @@ def train_PPO(scenario,
     cell_pos_as_features=model_config["cell_pos_as_features"]
     tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, device)
     tf_crit, value_module = create_critic(num_features, d_model, cell_pos_as_features, device)
+
+    action_softmax = model_config.get("action_softmax", False)
+    if action_softmax:
+        env.use_softmax = True
 
     print("Running policy:", policy_module(env.reset()))
     print("Running value:", value_module(env.reset())) # NOTE leave this in to init lazy modules
@@ -345,15 +354,15 @@ def train_PPO(scenario,
     )
 
     optim = torch.optim.Adam(loss_module.parameters(), lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    scheduler_lr = torch.optim.lr_scheduler.CosineAnnealingLR(
         optim, total_frames // frames_per_batch, 0.0
     )
 
     if checkpt_data is not None:
         tf_act.load_state_dict(checkpt_data['actor_state_dict'])
-        tf_crit.load_state_dict(checkpt_data['actor_state_dict'])
+        tf_crit.load_state_dict(checkpt_data['critic_state_dict'])
         optim.load_state_dict(checkpt_data['optimizer_state_dict'])
-        scheduler.load_state_dict(checkpt_data['scheduler_state_dict'])
+        scheduler_lr.load_state_dict(checkpt_data['scheduler_state_dict'])
         env.load_state_dict(checkpt_data['env_state_dict'])
         logs = checkpt_data['logs']
     else:
@@ -461,7 +470,7 @@ def train_PPO(scenario,
                 'actor_state_dict': tf_act.state_dict(),
                 'critic_state_dict': tf_crit.state_dict(),
                 'optimizer_state_dict': optim.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
+                'scheduler_state_dict': scheduler_lr.state_dict(),
                 'logs': logs,
                 'env_state_dict': env.state_dict() if hasattr(env, "state_dict") else None,
                 }
@@ -481,7 +490,14 @@ def train_PPO(scenario,
 
         # We're also using a learning rate scheduler. Like the gradient clipping,
         # this is a nice-to-have but nothing necessary for PPO to work.
-        scheduler.step()
+        scheduler_lr.step()
+        
+        # Decay entropy coefficient
+        if decay_entropy:
+            entropy_eps = max(entropy_eps - entropy_decay_rate, 0.0001)
+            loss_module.entropy_coef = entropy_eps
+            if wandb_mode != None:
+                wandb.log({"train/entropy_coef": entropy_eps})
 
     if wandb_mode == "TRAIN":
         run.finish()    
@@ -567,7 +583,7 @@ def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rol
         rollout_steps = int(rollout_steps)
 
     # Run evaluation
-    env.base_env.render = True
+    env.base_env.render = False
     env.base_env.count = 0
     render_name = f"render_{eval_id}"
     render_fp = os.path.join(f"{folder_path}/gif/", render_name)
