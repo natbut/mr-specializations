@@ -427,6 +427,11 @@ class Scenario(BaseScenario):
             # agents_cell_dists = torch.min(torch.cdist(self.discrete_cell_centers, self.agents_pos), dim=-1).values # for each cell, dist to each agent
             # print("\nAgents cell dists:", agents_cell_dists, " Shape:", agents_cell_dists.shape)
 
+            # == MOVE COMPLETED TASKS OUT OF BOUNDS ==
+            for i, task in enumerate(self.tasks):
+                if self.completed_tasks[:, i].any():
+                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[0].clone()
+
             # == UPDATE CELL EXPLORATION STATUS == 
             self._update_exploration()
 
@@ -939,13 +944,9 @@ class Scenario(BaseScenario):
                     occupied_positions_agents + occupied_positions_tasks,
                     dim=1,
                 )
-
-                # == MOVE COMPLETED TASKS OUT OF BOUNDS (TO STORAGE) ==
-                if self.completed_tasks[:, i].any():
-                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[0].clone()
                 
                 # == SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY) ==
-                    # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
+                # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
                 for idx in range(self.world.batch_dim):
                     spawn_prob = self.tasks_respawn_rate * len(explored_cell_centers[idx])
                     if verbose: print("Spawn prob:", spawn_prob)
