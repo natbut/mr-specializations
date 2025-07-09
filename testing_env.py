@@ -43,7 +43,7 @@ if __name__ == "__main__":
     # print("\nReset Obs Graph:\n", obs_graph["graph"], "Num graphs:", obs_graph["graph"].num_graphs) #, "\n Graph 0:\n", obs_graph[0])
     # print("\nGraphs to Data list:\n", obs_graph["graph"].to_data_list())
 
-    for i in range(3):
+    for i in range(8):
         print("STEP", i)
         next_tdict= env.step(actions_tdict)
 

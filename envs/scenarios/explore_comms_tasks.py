@@ -431,6 +431,11 @@ class Scenario(BaseScenario):
                 if self.completed_tasks[:, i].any():
                     task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[0].clone()
 
+            # == MOVE COMPLETED TASKS OUT OF BOUNDS ==
+            for i, task in enumerate(self.tasks):
+                if self.completed_tasks[:, i].any():
+                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[0].clone()
+
             # == UPDATE CELL EXPLORATION STATUS == 
             self._update_exploration()
 
@@ -963,7 +968,7 @@ class Scenario(BaseScenario):
                 )
                 
                 # == SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY) ==
-                    # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
+                # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
                 for idx in range(self.world.batch_dim):
                     spawn_prob = self.tasks_respawn_rate * len(explored_cell_centers[idx])
                     if verbose: print("Spawn prob:", spawn_prob)
