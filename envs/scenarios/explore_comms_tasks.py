@@ -123,6 +123,10 @@ class Scenario(BaseScenario):
         self.spawn_tasks_burst = kwargs.pop(
             "spawn_tasks_burst", False
         )
+
+        self.obstacles_to_global = kwargs.pop(
+            "obstacles_to_global", True
+        )
         
         self.min_collision_distance = (
             0.005  # Minimum distance between entities for collision trigger
@@ -422,10 +426,10 @@ class Scenario(BaseScenario):
         
         # Process environment updates
         if is_last:
-            # == TOGGLE NEWLY-EXPLORED REGIONS ==
-            # print("Agents pos shape:", self.agents_pos.shape, " Cell centers shape:", self.discrete_cell_centers.shape)
-            # agents_cell_dists = torch.min(torch.cdist(self.discrete_cell_centers, self.agents_pos), dim=-1).values # for each cell, dist to each agent
-            # print("\nAgents cell dists:", agents_cell_dists, " Shape:", agents_cell_dists.shape)
+            # == MOVE COMPLETED TASKS OUT OF BOUNDS ==
+            for i, task in enumerate(self.tasks):
+                if self.completed_tasks[:, i].any():
+                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[0].clone()
 
             # == UPDATE CELL EXPLORATION STATUS == 
             self._update_exploration()
@@ -503,11 +507,12 @@ class Scenario(BaseScenario):
         # print("Tasks per cell (0):", tasks_per_cell[0], "\n shape:", tasks_per_cell.shape)
 
         # Obstacles per cell
-        obstacles_pos = torch.stack([o.state.pos for o in self.obstacles], dim=1)  # [B, N_obstacles, 2]
-        obstacles_in_cell = (
-            (cell_centers.unsqueeze(2) - obstacles_pos.unsqueeze(1)).abs() <= self.discrete_resolution / 2
-        ).all(dim=-1)  # [B, N_cells, N_obstacles]
-        obstacles_per_cell = obstacles_in_cell.sum(dim=-1).float()  # [B, N_cells]
+        if self.obstacles_to_global:
+            obstacles_pos = torch.stack([o.state.pos for o in self.obstacles], dim=1)  # [B, N_obstacles, 2]
+            obstacles_in_cell = (
+                (cell_centers.unsqueeze(2) - obstacles_pos.unsqueeze(1)).abs() <= self.discrete_resolution / 2
+            ).all(dim=-1)  # [B, N_cells, N_obstacles]
+            obstacles_per_cell = obstacles_in_cell.sum(dim=-1).float()  # [B, N_cells]
 
         # print("Obs per cell (0):", obstacles_per_cell[0], "\n shape:", obstacles_per_cell.shape)
 
@@ -546,13 +551,21 @@ class Scenario(BaseScenario):
         # print("Explored (0):", explored[0], "\n shape:", explored.shape)
 
         # Stack features into last dimension
-        features = [
-                tasks_per_cell,
-                obstacles_per_cell,
-                agents_per_cell,
-                frontiers_per_cell,
-                explored,
-            ]
+        if self.obstacles_to_global:
+            features = [
+                    tasks_per_cell,
+                    obstacles_per_cell,
+                    agents_per_cell,
+                    frontiers_per_cell,
+                    explored,
+                ]
+        else:
+            features = [
+                    tasks_per_cell,
+                    agents_per_cell,
+                    frontiers_per_cell,
+                    explored,
+                ]
         if self.comms_rew_decay_drop != None:
             features.append(base_per_cell)
         self.discrete_cell_features = torch.stack(
@@ -626,18 +639,19 @@ class Scenario(BaseScenario):
         # print("Task dist per cell (0):", task_dist_per_cell[0], "\n shape:", task_dist_per_cell.shape)
 
         # Obstacles per cell
-        obstacles_pos = torch.stack([o.state.pos for o in self.obstacles], dim=1)  # [B, N_obstacles, 2]
-        dists = torch.norm(cell_centers.unsqueeze(2) - obstacles_pos.unsqueeze(1), dim=-1)
-        min_dists, _ = dists.min(dim=-1)  # [B, N_cells]
-        obstacles_in_cell = (
-            (cell_centers.unsqueeze(2) - obstacles_pos.unsqueeze(1)).abs() <= self.discrete_resolution / 2
-        ).all(dim=-1)  # [B, N_cells, N_obstacles]
-        any_obstacle_in_cell = obstacles_in_cell.any(dim=-1)  # [B, N_cells]
-        obstacles_dist_per_cell = torch.where(
-            any_obstacle_in_cell,
-            torch.ones_like(min_dists),
-            torch.clamp(1.0 - (min_dists/max_dist), min=0.0, max=max_dist)
-        )  # [B, N_cells]
+        if self.obstacles_to_global:
+            obstacles_pos = torch.stack([o.state.pos for o in self.obstacles], dim=1)  # [B, N_obstacles, 2]
+            dists = torch.norm(cell_centers.unsqueeze(2) - obstacles_pos.unsqueeze(1), dim=-1)
+            min_dists, _ = dists.min(dim=-1)  # [B, N_cells]
+            obstacles_in_cell = (
+                (cell_centers.unsqueeze(2) - obstacles_pos.unsqueeze(1)).abs() <= self.discrete_resolution / 2
+            ).all(dim=-1)  # [B, N_cells, N_obstacles]
+            any_obstacle_in_cell = obstacles_in_cell.any(dim=-1)  # [B, N_cells]
+            obstacles_dist_per_cell = torch.where(
+                any_obstacle_in_cell,
+                torch.ones_like(min_dists),
+                torch.clamp(1.0 - (min_dists/max_dist), min=0.0, max=max_dist)
+            )  # [B, N_cells]
 
         # print("Obs  dist per cell (0):", obstacles_dist_per_cell[0], "\n shape:", obstacles_dist_per_cell.shape)
 
@@ -684,13 +698,21 @@ class Scenario(BaseScenario):
         # print("Explored (0):", explored[0], "\n shape:", explored.shape)
 
         # Stack features into last dimension
-        features = [
-                task_dist_per_cell,
-                obstacles_dist_per_cell,
-                agents_dist_per_cell,
-                frontiers_per_cell,
-                explored,
-            ]
+        if self.obstacles_to_global:
+            features = [
+                    task_dist_per_cell,
+                    obstacles_dist_per_cell,
+                    agents_dist_per_cell,
+                    frontiers_per_cell,
+                    explored,
+                ]
+        else:
+            features = [
+                    task_dist_per_cell,
+                    agents_dist_per_cell,
+                    frontiers_per_cell,
+                    explored,
+                ]
         # Add base distance feature if base is relevant to scenario config
         if self.comms_rew_decay_drop != None:
             features.append(base_dist_per_cell)
@@ -939,10 +961,6 @@ class Scenario(BaseScenario):
                     occupied_positions_agents + occupied_positions_tasks,
                     dim=1,
                 )
-
-                # == MOVE COMPLETED TASKS OUT OF BOUNDS (TO STORAGE) ==
-                if self.completed_tasks[:, i].any():
-                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[0].clone()
                 
                 # == SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY) ==
                     # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
