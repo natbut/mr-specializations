@@ -5,7 +5,7 @@ max_n_agents_car: 0
 
 max_n_tasks: 10
 max_n_obstacles: 10
-num_feats: 6
+num_feats: 5
 
 variable_team_size: False
 
@@ -21,7 +21,8 @@ task_comp_range: 0.1
 
 min_distance_between_entities: 0.05
 
-rich_cell_features: True
+obstacles_to_global: False
+rich_cell_features: False
 spawn_tasks_burst: True
 
 task_reward: 0.1
