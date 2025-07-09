@@ -431,11 +431,6 @@ class Scenario(BaseScenario):
                 if self.completed_tasks[:, i].any():
                     task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[0].clone()
 
-            # == MOVE COMPLETED TASKS OUT OF BOUNDS ==
-            for i, task in enumerate(self.tasks):
-                if self.completed_tasks[:, i].any():
-                    task.state.pos[self.completed_tasks[:, i]] = self.storage_pos[0].clone()
-
             # == UPDATE CELL EXPLORATION STATUS == 
             self._update_exploration()
 
