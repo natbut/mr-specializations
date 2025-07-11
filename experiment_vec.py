@@ -256,7 +256,7 @@ def eval(scenario, scenario_configs, env_configs, model_configs, checkpt_fp, sav
     # RUN EVAL #
     logs = defaultdict(list)
     print("Setup complete, running eval...")
-    run_eval(env, policy_module, eval_id, save_fp, logs, rollout_steps, wandb_mode=None)
+    run_eval(env, policy_module, eval_id, save_fp, logs, rollout_steps, log_actions=True, wandb_mode=None)
 
 
 
@@ -579,7 +579,7 @@ def create_critic(num_features, d_model, cell_pos_as_features, device):
     return tf_crit, value_module
 
 
-def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rollout_steps=16, wandb_mode=None):
+def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rollout_steps=16, log_actions=False, wandb_mode=None):
     if type(rollout_steps) is not int:
         rollout_steps = int(rollout_steps)
 
@@ -603,18 +603,17 @@ def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rol
             eval_rollout["next", "reward"].sum().item()
         )
         logs["eval step_count"].append(eval_rollout["step_count"].max().item())
-
-        # for j in range(env.base_env.sim_env.n_agents):
-        #     for i in range(num_heuristics):
-        #         logs[f"eval/env0_rob{j}_action{i}"] = eval_rollout["action"]...
         logs["action"] = eval_rollout["action"]
-        # actions = logs["action"].view(rollout_steps,
-        #                                       env.base_env.batch_size[0],
-        #                                       env.base_env.sim_env.n_agents,
-        #                                       len(env.base_env.heuristic_eval_fns)
-        #                                       )
-        print("\nAction:\n", logs["action"]) #logs["action"])
-        # save_actions_to_csv(actions, render_fp)
+        
+        print("\nAction:\n", logs["action"], "shape:", logs["action"].shape) #logs["action"])
+        if log_actions:
+            # logs["action"] is [B, S, R*F],
+            B, S, RF = logs["action"].shape
+            F = env.base_env.scenario.num_feats  # or model_config["num_features"]
+            R = RF//F
+            actions = logs["action"].reshape(B, S, R, F).permute(1, 0, 2, 3)  # [S, B, R, N_feats]
+            print("Reshaped actions:", actions, "shape", actions.shape)
+            save_actions_to_csv(actions, render_fp)
 
         if wandb_mode != None:
             wandb.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})
