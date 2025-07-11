@@ -163,7 +163,7 @@ class EnvironmentTransformer(nn.Module):
         noise_std=0.1,
         max_cells=100, # <-- IMPORTANT: match padding size
         cell_pos_as_features=True,
-        agent_id_enc=False,
+        agent_id_enc=True,
         agent_attn=False
     ):
         super().__init__()

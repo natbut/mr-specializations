@@ -248,7 +248,8 @@ def eval(scenario, scenario_configs, env_configs, model_configs, checkpt_fp, sav
     d_feedforward = model_config["d_feedforward"]
     d_model = model_config["d_model"]
     agent_attn=model_config["agent_attn"]
-    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, device)
+    cell_pos_as_features=model_config["cell_pos_as_features"]
+    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, device)
     tf_act.load_state_dict(checkpt_data['actor_state_dict'])
     tf_act.eval()
 
@@ -281,7 +282,7 @@ def train_PPO(scenario,
               checkpt_data=None,
               ):
     
-    entropy_decay_rate = entropy_eps / total_frames
+    entropy_decay_rate = entropy_eps / (total_frames//frames_per_batch)
 
     ### INIT WANDB ###
     if wandb_mode=="TRAIN":
@@ -495,7 +496,7 @@ def train_PPO(scenario,
         # Decay entropy coefficient
         if decay_entropy:
             entropy_eps = max(entropy_eps - entropy_decay_rate, 0.0001)
-            loss_module.entropy_coef = entropy_eps
+            loss_module.entropy_coef = torch.tensor(entropy_eps, dtype=torch.float32, device=device)
             if wandb_mode != None:
                 wandb.log({"train/entropy_coef": entropy_eps})
 
@@ -583,7 +584,7 @@ def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rol
         rollout_steps = int(rollout_steps)
 
     # Run evaluation
-    env.base_env.render = False
+    env.base_env.render = True
     env.base_env.count = 0
     render_name = f"render_{eval_id}"
     render_fp = os.path.join(f"{folder_path}/gif/", render_name)

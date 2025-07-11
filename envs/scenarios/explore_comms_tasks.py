@@ -84,7 +84,7 @@ class Scenario(BaseScenario):
             "task_reward", 0.1
         )
         self.time_penalty = kwargs.pop(
-            "time_penalty", -0.11
+            "time_penalty", -0.001
         )
 
         self.agent_radius = kwargs.pop(
@@ -98,7 +98,7 @@ class Scenario(BaseScenario):
             "discrete_resolution", 0.2)
         
         self.num_feats = kwargs.pop(
-            "num_feats", 5
+            "num_feats", 6
             ) # TODO compute
         
         self.min_distance_between_entities = kwargs.pop(
@@ -106,10 +106,10 @@ class Scenario(BaseScenario):
             ) # Minimum distance between entities at spawning time
         
         self.comms_rew_decay_drop = kwargs.pop(
-            "comms_rew_decay_drop", None #10.0
+            "comms_rew_decay_drop", 10.0
         )
         self.comms_rew_decay_max = kwargs.pop(
-            "comms_rew_decay_max", None #0.5
+            "comms_rew_decay_max", 0.5 #0.5
         )
         
         self.variable_team_size = kwargs.pop(
@@ -126,6 +126,10 @@ class Scenario(BaseScenario):
 
         self.obstacles_to_global = kwargs.pop(
             "obstacles_to_global", True
+        )
+
+        self.spawn_agents_at_base = kwargs.pop(
+            "spawn_agents_at_base", True
         )
         
         self.min_collision_distance = (
@@ -341,19 +345,21 @@ class Scenario(BaseScenario):
             # If active, compute new position and clamp within world bounds
             if agent.is_active:
                 self.agents.append(agent)
-                offset = torch.randn_like(self.base.state.pos)  # Random direction
-                offset = offset / torch.norm(offset, dim=-1, keepdim=True) * torch.rand_like(self.base.state.pos) * self.agent_spawn_radius
-                new_pos = self.base.state.pos + offset
-                new_pos[..., 0] = torch.clamp(new_pos[..., 0], -self.world.x_semidim, self.world.x_semidim)
-                new_pos[..., 1] = torch.clamp(new_pos[..., 1], -self.world.y_semidim, self.world.y_semidim)
+                if self.spawn_agents_at_base:
+                    offset = torch.randn_like(self.base.state.pos)  # Random direction
+                    offset = offset / torch.norm(offset, dim=-1, keepdim=True) * torch.rand_like(self.base.state.pos) * self.agent_spawn_radius
+                    new_pos = self.base.state.pos + offset
+                    new_pos[..., 0] = torch.clamp(new_pos[..., 0], -self.world.x_semidim, self.world.x_semidim)
+                    new_pos[..., 1] = torch.clamp(new_pos[..., 1], -self.world.y_semidim, self.world.y_semidim)
+
+                    # print("Agent active:", agent.is_active)
+                    # print("New pos:", new_pos)
+                    agent.state.pos = new_pos
             # else, move to storage pos
             else:
                 agent.trajs = -1*self.storage_pos[:]
-                new_pos = -1*self.storage_pos[:]
+                agent.state.pos = -1*self.storage_pos[:]
                 
-            # print("Agent active:", agent.is_active)
-            # print("New pos:", new_pos)
-            agent.state.pos = new_pos
             
         # print("!! RESET ENV AGENTS:", self.agents, "shape:", len(self.agents))
 
@@ -459,7 +465,7 @@ class Scenario(BaseScenario):
         # Mark cells as explored if any agent is within the square bounds of the cell
         # For each cell, check if any agent is within half the cell width/height in both x and y
         cell_centers = self.discrete_cell_centers  # [B, N_cells, 2]
-        agent_pos = self.agents_pos  # [B, N_agents, 2]
+        agent_pos = torch.cat((self.agents_pos, self.base.state.pos.unsqueeze(1)), dim=1) # [B, N_agents+1, 2]
         # Expand dims for broadcasting: [B, N_cells, 1, 2] - [B, 1, N_agents, 2]
         diff = (cell_centers.unsqueeze(2) - agent_pos.unsqueeze(1)).abs()
         # Add a small epsilon to include boundary cases due to floating point precision
@@ -1017,19 +1023,19 @@ class Scenario(BaseScenario):
         ]  # Plot the rotation for non-holonomic agents
 
         # Plot explored regions
-        side_len = self.discrete_resolution/2
-        square = [[-side_len, -side_len],
-                  [-side_len, side_len],
-                  [side_len, side_len],
-                  [side_len, -side_len]]
+        # side_len = self.discrete_resolution/2
+        # square = [[-side_len, -side_len],
+        #           [-side_len, side_len],
+        #           [side_len, side_len],
+        #           [side_len, -side_len]]
         
-        for center in self.stored_explored_cell_centers[env_index]:
-            cell = rendering.make_polygon(square, filled=True)
-            xform = rendering.Transform()
-            xform.set_translation(*center)
-            cell.add_attr(xform)
-            cell.set_color(0.95,0.95,0.95)
-            geoms.append(cell)
+        # for center in self.stored_explored_cell_centers[env_index]:
+        #     cell = rendering.make_polygon(square, filled=True)
+        #     xform = rendering.Transform()
+        #     xform.set_translation(*center)
+        #     cell.add_attr(xform)
+        #     cell.set_color(0.95,0.95,0.95)
+        #     geoms.append(cell)
 
         # Plot Task ranges
         for target in self.tasks:
@@ -1056,7 +1062,7 @@ class Scenario(BaseScenario):
                         geoms.append(pt_circle)
 
         # Plot communication lines
-        if self.comms_rendering_range > 0:
+        if self.comms_rew_decay_max > 0:
             for i, agent1 in enumerate(self.world.agents):
                 for j, agent2 in enumerate(self.world.agents):
                     if j <= i:
