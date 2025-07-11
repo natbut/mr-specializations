@@ -1023,19 +1023,19 @@ class Scenario(BaseScenario):
         ]  # Plot the rotation for non-holonomic agents
 
         # Plot explored regions
-        # side_len = self.discrete_resolution/2
-        # square = [[-side_len, -side_len],
-        #           [-side_len, side_len],
-        #           [side_len, side_len],
-        #           [side_len, -side_len]]
+        side_len = self.discrete_resolution/2
+        square = [[-side_len, -side_len],
+                  [-side_len, side_len],
+                  [side_len, side_len],
+                  [side_len, -side_len]]
         
-        # for center in self.stored_explored_cell_centers[env_index]:
-        #     cell = rendering.make_polygon(square, filled=True)
-        #     xform = rendering.Transform()
-        #     xform.set_translation(*center)
-        #     cell.add_attr(xform)
-        #     cell.set_color(0.95,0.95,0.95)
-        #     geoms.append(cell)
+        for center in self.stored_explored_cell_centers[env_index]:
+            cell = rendering.make_polygon(square, filled=True)
+            xform = rendering.Transform()
+            xform.set_translation(*center)
+            cell.add_attr(xform)
+            cell.set_color(0.95,0.95,0.95)
+            geoms.append(cell)
 
         # Plot Task ranges
         for target in self.tasks:
