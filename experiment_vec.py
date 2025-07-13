@@ -418,7 +418,7 @@ def train_PPO(scenario,
                 logs["loss_critic"].append(loss_vals["loss_critic"].item())
                 logs["loss_entropy"].append(loss_vals["loss_entropy"].item())
 
-                if wandb_mode != None:
+                if wandb_mode == "TRAIN":
                     wandb.log({"train/loss_objective": loss_vals["loss_objective"].item()})
                     wandb.log({"train/loss_critic": loss_vals["loss_critic"].item()})
                     wandb.log({"train/loss_entropy": loss_vals["loss_entropy"].item()})
@@ -441,7 +441,7 @@ def train_PPO(scenario,
         logs["step_count"].append(data["step_count"].max().item())
         logs["lr"].append(optim.param_groups[0]["lr"])
 
-        if wandb_mode != None:
+        if wandb_mode == "TRAIN":
             wandb.log({"train/mean_reward": data["next", "reward"].mean().item()})
             wandb.log({"train/step_count": data["step_count"].max().item()})
             wandb.log({"train/lr": optim.param_groups[0]["lr"]})
@@ -497,7 +497,7 @@ def train_PPO(scenario,
         if decay_entropy:
             entropy_eps = max(entropy_eps - entropy_decay_rate, 0.0001)
             loss_module.entropy_coef = torch.tensor(entropy_eps, dtype=torch.float32, device=device)
-            if wandb_mode != None:
+            if wandb_mode == "TRAIN":
                 wandb.log({"train/entropy_coef": entropy_eps})
 
     if wandb_mode == "TRAIN":
@@ -605,7 +605,7 @@ def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rol
         logs["eval step_count"].append(eval_rollout["step_count"].max().item())
         logs["action"] = eval_rollout["action"]
         
-        print("\nAction:\n", logs["action"], "shape:", logs["action"].shape) #logs["action"])
+        # print("\nAction:\n", logs["action"], "shape:", logs["action"].shape) #logs["action"])
         if log_actions:
             # logs["action"] is [B, S, R*F],
             B, S, RF = logs["action"].shape
@@ -615,7 +615,7 @@ def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rol
             print("Reshaped actions:", actions, "shape", actions.shape)
             save_actions_to_csv(actions, render_fp)
 
-        if wandb_mode != None:
+        if wandb_mode == "TRAIN":
             wandb.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})
             wandb.log({"eval/cum_reward": eval_rollout["next", "reward"].sum().item()})
             wandb.log({"eval/step_count": eval_rollout["step_count"].max().item()})
