@@ -495,7 +495,7 @@ def train_PPO(scenario,
         # Decay entropy coefficient
         if decay_entropy:
             entropy_eps = max(entropy_eps - entropy_decay_rate, 0.0001)
-            loss_module.entropy_coef = entropy_eps
+            loss_module.entropy_coef = torch.tensor(entropy_eps, dtype=torch.float32, device=device)
             if wandb_mode != None:
                 wandb.log({"train/entropy_coef": entropy_eps})
 
