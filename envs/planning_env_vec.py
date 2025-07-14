@@ -72,7 +72,7 @@ class VMASPlanningEnv(EnvBase):
                         device=device
                     ),
                     rob_pos=Unbounded(
-                        shape=(self.sim_env.n_agents, 2),
+                        shape=(-1, 2), # (self.sim_env.n_agents, 2),
                         dtype=torch.float64,
                         device=device
                     ),
@@ -138,8 +138,8 @@ class VMASPlanningEnv(EnvBase):
                         dtype=torch.float32,
                         device=device
                     ),
-                    rob_pos=Unbounded(
-                        shape=(self.num_envs, self.sim_env.n_agents, 2),
+                    rob_data=Unbounded(
+                        shape=(self.num_envs, -1, 3), # (self.num_envs, self.sim_env.n_agents, 3)
                         dtype=torch.float64,
                         device=device
                     ),

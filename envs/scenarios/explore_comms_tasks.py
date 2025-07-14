@@ -84,7 +84,7 @@ class Scenario(BaseScenario):
             "task_reward", 0.1
         )
         self.time_penalty = kwargs.pop(
-            "time_penalty", -0.11
+            "time_penalty", -0.001
         )
 
         self.agent_radius = kwargs.pop(
@@ -98,7 +98,7 @@ class Scenario(BaseScenario):
             "discrete_resolution", 0.2)
         
         self.num_feats = kwargs.pop(
-            "num_feats", 5
+            "num_feats", 6
             ) # TODO compute
         
         self.min_distance_between_entities = kwargs.pop(
@@ -106,10 +106,10 @@ class Scenario(BaseScenario):
             ) # Minimum distance between entities at spawning time
         
         self.comms_rew_decay_drop = kwargs.pop(
-            "comms_rew_decay_drop", None #10.0
+            "comms_rew_decay_drop", 10.0
         )
         self.comms_rew_decay_max = kwargs.pop(
-            "comms_rew_decay_max", None #0.5
+            "comms_rew_decay_max", 0.5 #0.5
         )
         
         self.variable_team_size = kwargs.pop(
@@ -126,6 +126,14 @@ class Scenario(BaseScenario):
 
         self.obstacles_to_global = kwargs.pop(
             "obstacles_to_global", True
+        )
+
+        self.spawn_agents_at_base = kwargs.pop(
+            "spawn_agents_at_base", True
+        )
+
+        self.rew_only_if_comms = kwargs.pop(
+            "rew_only_if_comms", False
         )
         
         self.min_collision_distance = (
@@ -171,7 +179,7 @@ class Scenario(BaseScenario):
             (max(self.max_n_agents, self.max_n_tasks), 3), device=device
         )  # Other colors if we have more elements are random
 
-        self.agents = []
+        self.active_agents = []
         for i in range(self.max_n_agents):
             # color = self.agent_color
             color = (
@@ -230,10 +238,11 @@ class Scenario(BaseScenario):
                 )
                 
             agent.tasks_rew = torch.zeros(batch_dim, device=device)
+            agent.aggr_rew = torch.zeros(batch_dim, device=device)
             agent.null_action = torch.zeros((batch_dim, 2), device=device)
 
             world.add_agent(agent)  # Add the agent to the world
-            self.agents.append(agent)
+            self.active_agents.append(agent)
 
         ################
         # Add tasks
@@ -287,7 +296,7 @@ class Scenario(BaseScenario):
         self.completed_tasks = torch.zeros((batch_dim, self.max_n_tasks), device=device)
         self.stored_tasks = torch.full(self.completed_tasks.shape, True, device=device)
         self.shared_tasks_rew = torch.zeros(batch_dim, device=device)
-        
+
         ################
         # Init High-Level Graph Details
         ################
@@ -331,7 +340,7 @@ class Scenario(BaseScenario):
         )
 
         # RESET AGENTS
-        self.agents = []
+        self.active_agents = []
         for i, agent in enumerate(self.world.agents):
             if i <= 1 or not self.variable_team_size: # Mandates that we always have min 2 agents
                 agent.is_active = True
@@ -340,20 +349,26 @@ class Scenario(BaseScenario):
             
             # If active, compute new position and clamp within world bounds
             if agent.is_active:
-                self.agents.append(agent)
-                offset = torch.randn_like(self.base.state.pos)  # Random direction
-                offset = offset / torch.norm(offset, dim=-1, keepdim=True) * torch.rand_like(self.base.state.pos) * self.agent_spawn_radius
-                new_pos = self.base.state.pos + offset
-                new_pos[..., 0] = torch.clamp(new_pos[..., 0], -self.world.x_semidim, self.world.x_semidim)
-                new_pos[..., 1] = torch.clamp(new_pos[..., 1], -self.world.y_semidim, self.world.y_semidim)
+                self.active_agents.append(agent)
+                if self.spawn_agents_at_base:
+                    offset = torch.randn_like(self.base.state.pos)  # Random direction
+                    offset = offset / torch.norm(offset, dim=-1, keepdim=True) * torch.rand_like(self.base.state.pos) * self.agent_spawn_radius
+                    new_pos = self.base.state.pos + offset
+                    new_pos[..., 0] = torch.clamp(new_pos[..., 0], -self.world.x_semidim, self.world.x_semidim)
+                    new_pos[..., 1] = torch.clamp(new_pos[..., 1], -self.world.y_semidim, self.world.y_semidim)
+
+                    # print("Agent active:", agent.is_active)
+                    # print("New pos:", new_pos)
+                    agent.state.pos = new_pos
             # else, move to storage pos
             else:
                 agent.trajs = -1*self.storage_pos[:]
-                new_pos = -1*self.storage_pos[:]
+                agent.state.pos = -1*self.storage_pos[:]
+
+            
+            # RESET AGGREGATED REWARD
+            agent.aggr_rew.fill_(0.0) # for rew_only_if_comms 
                 
-            # print("Agent active:", agent.is_active)
-            # print("New pos:", new_pos)
-            agent.state.pos = new_pos
             
         # print("!! RESET ENV AGENTS:", self.agents, "shape:", len(self.agents))
 
@@ -378,7 +393,7 @@ class Scenario(BaseScenario):
         
         # INIT EXPLORED CELLS
         self.agents_pos = torch.stack(
-                [a.state.pos for a in self.world.agents], dim=1)
+                [a.state.pos for a in self.active_agents], dim=1)
         self.tasks_pos = torch.stack(
             [t.state.pos for t in self.tasks], dim=1)
         self._update_exploration()
@@ -390,11 +405,12 @@ class Scenario(BaseScenario):
         if self.rich_cell_features:
             self._update_cell_features_rich()
         else:
-            self._update_cell_features_sparse() 
+            self._update_cell_features_sparse()
+
 
     def reward(self, agent: Agent):
-        is_first = agent == self.world.agents[0]
-        is_last = agent == self.world.agents[-2]
+        is_first = agent == self.active_agents[0]
+        is_last = agent == self.active_agents[-1]
 
         if is_first:
             # We can compute rewards when the first agent is called such that we do not have to recompute global components
@@ -406,7 +422,7 @@ class Scenario(BaseScenario):
 
             # Check completed tasks based on passenger locations
             self.agents_pos = torch.stack(
-                [a.state.pos for a in self.world.agents], dim=1
+                [a.state.pos for a in self.active_agents], dim=1
             )
             self.tasks_pos = torch.stack([t.state.pos for t in self.tasks], dim=1)
             self.agents_tasks_dists = torch.cdist(self.agents_pos, self.tasks_pos)
@@ -420,9 +436,8 @@ class Scenario(BaseScenario):
 
             # Allocate completion credit to passengers
             self.shared_tasks_rew[:] = 0
-            for a in self.world.agents:
-                if a.is_active:
-                    self.shared_tasks_rew += self.agent_tasks_reward(a)
+            for a in self.active_agents:
+                self.shared_tasks_rew += self.agent_tasks_reward(a)
         
         # Process environment updates
         if is_last:
@@ -447,11 +462,15 @@ class Scenario(BaseScenario):
             else:
                 self._update_cell_features_sparse()    
 
-        tasks_reward = (
-            self.shared_tasks_rew if self.shared_rew else agent.tasks_rew
-        )  # Choose global or local reward based on configuration
+        if agent.is_active:
+            # Compute rewards for the agent
+            tasks_reward = (
+                self.shared_tasks_rew if self.shared_rew else agent.tasks_rew
+            )  # Choose global or local reward based on configuration
 
-        rews = tasks_reward + self.time_rew
+            rews = tasks_reward + self.time_rew
+        else:
+            rews = torch.zeros(self.world.batch_dim, device=self.world.device)
 
         return rews.unsqueeze(-1) # [B,1]
     
@@ -459,7 +478,7 @@ class Scenario(BaseScenario):
         # Mark cells as explored if any agent is within the square bounds of the cell
         # For each cell, check if any agent is within half the cell width/height in both x and y
         cell_centers = self.discrete_cell_centers  # [B, N_cells, 2]
-        agent_pos = self.agents_pos  # [B, N_agents, 2]
+        agent_pos = torch.cat((self.agents_pos, self.base.state.pos.unsqueeze(1)), dim=1) # [B, N_agents+1, 2]
         # Expand dims for broadcasting: [B, N_cells, 1, 2] - [B, 1, N_agents, 2]
         diff = (cell_centers.unsqueeze(2) - agent_pos.unsqueeze(1)).abs()
         # Add a small epsilon to include boundary cases due to floating point precision
@@ -668,12 +687,26 @@ class Scenario(BaseScenario):
             torch.ones_like(min_dists),
             torch.clamp(1.0 - (min_dists/max_dist), min=0.0, max=max_dist)
         )  # [B, N_cells]
-
+        # agents_dist_per_cell = agents_dist_per_cell / len(self.active_agents) # Normalize by number of agents to provide info on agent density per cell
         # print("Agents dist per cell (0):", agents_dist_per_cell[0], "\n shape:", agents_dist_per_cell.shape)
+
+        # aggr_rew_per_cell: sum of aggr_rew for agents in each cell
+        aggr_rew_per_cell = torch.zeros((B, N_cells), device=cell_centers.device)
+        for b in range(B):
+            for c in range(N_cells):
+                # Find agents in cell c
+                in_cell_mask = agents_in_cell[b, c]
+                if in_cell_mask.any():
+                    # Sum aggr_rew for agents in cell c
+                    aggr_rew_per_cell[b, c] = torch.sum(
+                        torch.stack([agent.aggr_rew[b] for i, agent in enumerate(self.active_agents) if in_cell_mask[i]])
+                    )
+                else:
+                    aggr_rew_per_cell[b, c] = 0.0
+
 
         # Frontiers per cell: number of neighbors that are not explored
         # Use candidate_frontiers and discrete_cell_explored
-        # TODO
         frontiers_per_cell = torch.zeros((B, N_cells), device=cell_centers.device)
         for b in range(B):
             # For each cell, check if each neighbor is explored
@@ -716,6 +749,11 @@ class Scenario(BaseScenario):
         # Add base distance feature if base is relevant to scenario config
         if self.comms_rew_decay_drop != None:
             features.append(base_dist_per_cell)
+
+        # Add aggregate reward in cell feature if needed
+        if self.rew_only_if_comms:
+            features.append(aggr_rew_per_cell)
+
         self.discrete_cell_features = torch.stack(
             features,
             dim=-1,
@@ -799,7 +837,7 @@ class Scenario(BaseScenario):
     
     def agent_tasks_reward(self, agent: Agent):
         """Reward for covering targets"""
-        agent_index = self.world.agents.index(agent)
+        agent_index = self.active_agents.index(agent) #self.world.agents.index(agent)
 
         agent.tasks_rew[:] = 0
         targets_covered_by_agent = (
@@ -811,21 +849,44 @@ class Scenario(BaseScenario):
         agent.tasks_rew += (
             num_covered_targets_covered_by_agent * self.complete_task_coeff
         )
+
+        if self.rew_only_if_comms:
+            # Only reward if agent has complete comms channel to base
+            agent.aggr_rew += agent.tasks_rew # Add reward from new tasks
+            comms_mask = self._get_reward_cutoff(agent)
+            # print(f"Agent {agent.name} Computed comms mask:", comms_mask)
+            # print(f"Agent {agent.name} Aggregated reward before mask:", agent.aggr_rew)
+            agent.tasks_rew = agent.aggr_rew * comms_mask # Use aggregated rew where comms cutoff is met
+            # print(f"Agent {agent.name} Reward according to mask:", agent.tasks_rew)
+            agent.aggr_rew[comms_mask] = 0.0 # Reset aggregated reward where comms cutoff is met
+            # print(f"Agent {agent.name} Reset aggregated rewards", agent.aggr_rew)
         
-        if self.comms_rew_decay_drop is not None and agent.tasks_rew.any() != 0.0:
+        elif self.comms_rew_decay_drop is not None and agent.tasks_rew.any() != 0.0:
+            # Decay inst. reward value
             decay = self._get_reward_decay(agent)
             agent.tasks_rew *= decay
             # print("Decayed rew:", agent.tasks_rew)
         return agent.tasks_rew
-            
-    def _get_reward_decay(self, agent: Agent):
-        # Decay reward value using multi-hop comms distance
+    
+    def _get_reward_cutoff(self, agent: Agent):
+        """Check if agent has complete comms channel to base. Return mask where True means agent has comms to base."""
+
+        # Compute the largest distance in the chain of shortest distances from agent to base
+        max_min_dists = self._compute_max_min_dists(agent)
+
+        # If the max_min_dists is below the comms cutoff, return agent's aggregated tasks reward
+        comms_mask = max_min_dists <= self.comms_rew_decay_max
+
+        return comms_mask.squeeze(-1)
+
+
+    def _compute_max_min_dists(self, agent: Agent):
         max_min_dists = torch.zeros((self.world.batch_dim,1), dtype=agent.state.pos.dtype, device=agent.state.pos.device)
         cur_pos = agent.state.pos.clone().unsqueeze(1)
         visited_pos = agent.state.pos.clone().unsqueeze(1)
         base_pos = self.base.state.pos.unsqueeze(1)
         other_agents_pos = torch.stack(
-            [a.state.pos for a in self.world.agents if a.name != agent.name],
+            [a.state.pos for a in self.active_agents if a.name != agent.name],
             dim=1
         )
         other_agents_pos = torch.cat((other_agents_pos, base_pos), dim=1)
@@ -856,11 +917,16 @@ class Scenario(BaseScenario):
             # print(f"New agents pos: {agents_pos}\nbase_pos: {base_pos}")
             
             max_min_dists = torch.where(min_dists > max_min_dists, min_dists, max_min_dists)
+
+        return max_min_dists
+
+            
+    def _get_reward_decay(self, agent: Agent):
+        """Decay reward value using multi-hop comms distance"""
+        # Compute the largest distance in the chain of shortest distances from agent to base
+        max_min_dists = self._compute_max_min_dists(agent)
         
         # Compute decay
-        # print("Tasks rew shape", agent.tasks_rew.shape)
-        # print("comp1:", self.comms_rew_decay_drop*max_min_dists.squeeze())
-        # print("comp2:", self.comms_rew_decay_drop*torch.full(agent.tasks_rew.shape, self.comms_rew_decay_max, device=agent.device))
         exponent = self.comms_rew_decay_drop*max_min_dists.squeeze() - self.comms_rew_decay_drop*torch.full(agent.tasks_rew.shape, self.comms_rew_decay_max, device=agent.device)
         # print("Exponent:", exponent)
         decay = torch.exp(exponent)
@@ -879,7 +945,7 @@ class Scenario(BaseScenario):
                 dim=1
             ),
             "obs_agents": torch.stack(
-                [a.state.pos for a in self.world.agents if a.name != agent.name and a.is_active],
+                [a.state.pos for a in self.active_agents if a.name != agent.name],
                 dim=1
             ),
             "obs_obstacles": torch.stack(
@@ -914,21 +980,15 @@ class Scenario(BaseScenario):
                                                      padding=0.0, 
                                                      output_size=(self.world.batch_dim, 100, 2))
         
-        rob_pos = torch.stack([agent.state.pos for agent in self.agents], dim=1)
-        # print("Env rob pos shape:", rob_pos.shape)
+        # Agent-specific data for global observation
+        rob_data = torch.stack([torch.cat((agent.state.pos, agent.aggr_rew.unsqueeze(-1)), dim=-1) for agent in self.active_agents], dim=1)
+
         # Pad stacked_pos to [B, max_n_agents, 2]
-        B, R, D = rob_pos.shape
+        B, R, D = rob_data.shape
         if R < self.max_n_agents:
             pad_shape = (B, self.max_n_agents - R, D)
-            pad = torch.zeros(pad_shape, device=rob_pos.device, dtype=rob_pos.dtype)
-            rob_pos = torch.cat([rob_pos, pad], dim=1)
-        # print("Padded rob pos:", rob_pos)
-        
-        # print("\nCell features sample:", cell_features[0][:4])
-        # torch.stack(
-        #         [agent.state.pos for agent in self.agents],
-        #         dim=1
-        #     )
+            pad = torch.zeros(pad_shape, device=rob_data.device, dtype=rob_data.dtype)
+            rob_data = torch.cat([rob_data, pad], dim=1)
         
         global_obs = {
             "cell_feats": cell_features, # torch.nested.to_padded_tensor(cell_features, padding=0.0),
@@ -938,9 +998,10 @@ class Scenario(BaseScenario):
 
             "num_cells": torch.tensor([len(ids) for ids in self.explored_cell_ids], dtype=cell_features.dtype, device=self.world.device),
 
-            "rob_pos": rob_pos,
+            "rob_data": rob_data,
             
-            "num_robs": torch.tensor([len(self.agents) for _ in range(self.world.batch_dim)], dtype=torch.float32, device=self.world.device)
+            "num_robs": torch.tensor([len(self.active_agents) for _ in range(self.world.batch_dim)], dtype=torch.float32, device=self.world.device)
+
         }
 
         return global_obs
@@ -1012,7 +1073,7 @@ class Scenario(BaseScenario):
 
         geoms = [
             ScenarioUtils.plot_entity_rotation(agent, env_index)
-            for agent in self.world.agents
+            for agent in self.active_agents
             if not isinstance(agent.dynamics, Holonomic)
         ]  # Plot the rotation for non-holonomic agents
 
@@ -1042,9 +1103,7 @@ class Scenario(BaseScenario):
 
         # Plot agents traj
         if len(self.world.agents[0].trajs) > 0:
-            for agent in self.world.agents:
-                if not agent.is_active:
-                    continue
+            for agent in self.active_agents:
                 traj_pts = agent.trajs[env_index][agent.traj_idx[env_index]:]
                 if len(traj_pts) > 0:
                     for pt in traj_pts:
@@ -1056,9 +1115,9 @@ class Scenario(BaseScenario):
                         geoms.append(pt_circle)
 
         # Plot communication lines
-        if self.comms_rendering_range > 0:
-            for i, agent1 in enumerate(self.world.agents):
-                for j, agent2 in enumerate(self.world.agents):
+        if self.comms_rew_decay_max > 0:
+            for i, agent1 in enumerate(self.active_agents):
+                for j, agent2 in enumerate(self.active_agents):
                     if j <= i:
                         continue
                     agent_dist = torch.linalg.vector_norm(
