@@ -320,26 +320,30 @@ class EnvironmentTransformer(nn.Module):
 
         # === Decoder ===
         # The `memory_key_padding_mask` tells the decoder to ignore padded elements in `enc_out` (memory)
-        decoder_out = self.decoder(tgt=robot_tokens, memory=enc_out, memory_key_padding_mask=mask, tgt_key_padding_mask=robot_mask)
+        decoder_out = self.decoder(tgt=robot_tokens, memory=enc_out, memory_key_padding_mask=mask, tgt_key_padding_mask=~robot_mask)
+        decoder_out = decoder_out * robot_mask.unsqueeze(-1)  # Mask before output_head
         # print("Decoder out pre-attn:", decoder_out[:5])
         if self.agent_attn:
-            cross_agents, _ = self.agent_cross_attn(decoder_out, decoder_out, decoder_out)
-            decoder_out = decoder_out + cross_agents
+            cross_agents, _ = self.agent_cross_attn(decoder_out, decoder_out, decoder_out, key_padding_mask=~robot_mask)
+            decoder_out = decoder_out + cross_agents * robot_mask.unsqueeze(-1)
 
         # === Heuristic outputs ===
         vals = self.output_head(decoder_out)
+        vals = vals * robot_mask.unsqueeze(-1)  # Zero out invalid robot logits
         vals = vals.reshape(vals.shape[0], -1)
         h_loc, h_scale = self.norm_extractor(vals)
 
-        if self.calls % 8000 == 0:
+        if self.calls % 1000 == 0:
             # print(f"Sample positional enc at call {self.calls}:\n", x_pos)
-            print(f"Sample features at call {self.calls}:\n", cell_feats_with_pos[:5])
-            print(f"Sample embedded features at call {self.calls}:\n", x[:5])
-            print(f"Sample attention weights at call {self.calls}:\n",)
-            print(f"Sample encoder out at call {self.calls}:\n", enc_out[:5])
-            print(f"Sample decoder out at call {self.calls}:\n", vals[:5])
-            print(f"Sample h_weights loc at call {self.calls}:\n", h_loc[:5])
-            print(f"Sample h_weights scale at call {self.calls}:\n", h_scale[:5])
+            num_samps = 2
+            print(f"Sample features at call {self.calls}:\n", cell_feats_with_pos[:num_samps])
+            print(f"Sample embedded features at call {self.calls}:\n", x[:num_samps])
+            print(f"Sample encoder out at call {self.calls}:\n", enc_out[:num_samps])
+            print(f"Sample robot_token out at call {self.calls}:\n", robot_tokens[:num_samps])
+            print(f"Sample decoder out at call {self.calls}:\n", decoder_out[:num_samps])
+            print(f"Sample output vals at call {self.calls}:\n", vals[:num_samps])
+            print(f"Sample h_weights loc at call {self.calls}:\n", h_loc[:num_samps])
+            print(f"Sample h_weights scale at call {self.calls}:\n", h_scale[:num_samps])
 
         self.calls += 1
 

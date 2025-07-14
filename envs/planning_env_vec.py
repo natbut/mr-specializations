@@ -31,6 +31,7 @@ class VMASPlanningEnv(EnvBase):
 
         self.heuristic_eval_fns = env_kwargs.pop("heuristic_fns", None)
         self.heuristic_eval_fns = [load_func(name) for name in self.heuristic_eval_fns]
+        self.n_heuristics = len(self.heuristic_eval_fns)
         self.num_envs = env_kwargs.pop("num_envs", 1)
         self.horizon = env_kwargs.pop("horizon", 0.25)
         self.planning_pts = env_kwargs.pop("planning_pts", 30)
@@ -41,8 +42,6 @@ class VMASPlanningEnv(EnvBase):
 
         self.render_fp = None
         self.count = 0
-
-        self.n_heuristics=6
 
         # TODO Check kwargs passing
         if self.num_envs == 1:
