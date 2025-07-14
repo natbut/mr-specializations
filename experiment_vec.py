@@ -248,14 +248,15 @@ def eval(scenario, scenario_configs, env_configs, model_configs, checkpt_fp, sav
     d_feedforward = model_config["d_feedforward"]
     d_model = model_config["d_model"]
     agent_attn=model_config["agent_attn"]
-    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, device)
+    cell_pos_as_features=model_config["cell_pos_as_features"]
+    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, device)
     tf_act.load_state_dict(checkpt_data['actor_state_dict'])
     tf_act.eval()
 
     # RUN EVAL #
     logs = defaultdict(list)
     print("Setup complete, running eval...")
-    run_eval(env, policy_module, eval_id, save_fp, logs, rollout_steps, wandb_mode=None)
+    run_eval(env, policy_module, eval_id, save_fp, logs, rollout_steps, log_actions=True, wandb_mode=None)
 
 
 
@@ -281,7 +282,7 @@ def train_PPO(scenario,
               checkpt_data=None,
               ):
     
-    entropy_decay_rate = entropy_eps / total_frames
+    entropy_decay_rate = entropy_eps / (total_frames//frames_per_batch)
 
     ### INIT WANDB ###
     if wandb_mode=="TRAIN":
@@ -417,7 +418,7 @@ def train_PPO(scenario,
                 logs["loss_critic"].append(loss_vals["loss_critic"].item())
                 logs["loss_entropy"].append(loss_vals["loss_entropy"].item())
 
-                if wandb_mode != None:
+                if wandb_mode == "TRAIN":
                     wandb.log({"train/loss_objective": loss_vals["loss_objective"].item()})
                     wandb.log({"train/loss_critic": loss_vals["loss_critic"].item()})
                     wandb.log({"train/loss_entropy": loss_vals["loss_entropy"].item()})
@@ -440,7 +441,7 @@ def train_PPO(scenario,
         logs["step_count"].append(data["step_count"].max().item())
         logs["lr"].append(optim.param_groups[0]["lr"])
 
-        if wandb_mode != None:
+        if wandb_mode == "TRAIN":
             wandb.log({"train/mean_reward": data["next", "reward"].mean().item()})
             wandb.log({"train/step_count": data["step_count"].max().item()})
             wandb.log({"train/lr": optim.param_groups[0]["lr"]})
@@ -496,7 +497,11 @@ def train_PPO(scenario,
         if decay_entropy:
             entropy_eps = max(entropy_eps - entropy_decay_rate, 0.0001)
             loss_module.entropy_coef = torch.tensor(entropy_eps, dtype=torch.float32, device=device)
+<<<<<<< HEAD
             if wandb_mode != None:
+=======
+            if wandb_mode == "TRAIN":
+>>>>>>> e1be799e93bce2dd73812eb88e5bed709ac88a7e
                 wandb.log({"train/entropy_coef": entropy_eps})
 
     if wandb_mode == "TRAIN":
@@ -515,8 +520,8 @@ def create_env(scenario, device, env_config, scenario_config) -> TransformedEnv:
         Compose(
             # ObservationNorm(in_keys=["cell_feats"]),
             # ObservationNorm(in_keys=["cell_pos"]),
-            # ObservationNorm(in_keys=["rob_pos"]),
-            DoubleToFloat(in_keys=["cell_feats", "cell_pos", "rob_pos"]),
+            # ObservationNorm(in_keys=["rob_data"]),
+            DoubleToFloat(in_keys=["cell_feats", "cell_pos", "rob_data"]),
             StepCounter(),
         ),
         device=device,
@@ -543,7 +548,7 @@ def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agen
 
     policy_module = TensorDictModule(
         tf_act,
-        in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"), ("rob_pos"), ("num_robs")],
+        in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"), ("rob_data"), ("num_robs")],
         out_keys=["loc","scale"]
     )
 
@@ -578,7 +583,7 @@ def create_critic(num_features, d_model, cell_pos_as_features, device):
     return tf_crit, value_module
 
 
-def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rollout_steps=16, wandb_mode=None):
+def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rollout_steps=16, log_actions=False, wandb_mode=None):
     if type(rollout_steps) is not int:
         rollout_steps = int(rollout_steps)
 
@@ -602,20 +607,19 @@ def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rol
             eval_rollout["next", "reward"].sum().item()
         )
         logs["eval step_count"].append(eval_rollout["step_count"].max().item())
-
-        # for j in range(env.base_env.sim_env.n_agents):
-        #     for i in range(num_heuristics):
-        #         logs[f"eval/env0_rob{j}_action{i}"] = eval_rollout["action"]...
         logs["action"] = eval_rollout["action"]
-        # actions = logs["action"].view(rollout_steps,
-        #                                       env.base_env.batch_size[0],
-        #                                       env.base_env.sim_env.n_agents,
-        #                                       len(env.base_env.heuristic_eval_fns)
-        #                                       )
-        print("\nAction:\n", logs["action"]) #logs["action"])
-        # save_actions_to_csv(actions, render_fp)
+        
+        # print("\nAction:\n", logs["action"], "shape:", logs["action"].shape) #logs["action"])
+        if log_actions:
+            # logs["action"] is [B, S, R*F],
+            B, S, RF = logs["action"].shape
+            F = env.base_env.scenario.num_feats  # or model_config["num_features"]
+            R = RF//F
+            actions = logs["action"].reshape(B, S, R, F).permute(1, 0, 2, 3)  # [S, B, R, N_feats]
+            print("Reshaped actions:", actions, "shape", actions.shape)
+            save_actions_to_csv(actions, render_fp)
 
-        if wandb_mode != None:
+        if wandb_mode == "TRAIN":
             wandb.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})
             wandb.log({"eval/cum_reward": eval_rollout["next", "reward"].sum().item()})
             wandb.log({"eval/step_count": eval_rollout["step_count"].max().item()})
