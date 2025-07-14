@@ -458,7 +458,7 @@ def train_PPO(scenario,
         lr_str = f"lr policy: {logs['lr'][-1]: 4.4f}"
         if i % 10 == 0:
             # Run evaluation
-            run_eval(env, policy_module, i, test_folder_path, logs, 16, wandb_mode)
+            run_eval(env, policy_module, i, test_folder_path, logs, 16, log_actions=False, wandb_mode=wandb_mode)
             eval_str = (
                     f"eval cumulative reward: {logs['eval reward (sum)'][-1]: 4.4f} "
                     f"(init: {logs['eval reward (sum)'][0]: 4.4f})"
@@ -497,11 +497,7 @@ def train_PPO(scenario,
         if decay_entropy:
             entropy_eps = max(entropy_eps - entropy_decay_rate, 0.0001)
             loss_module.entropy_coef = torch.tensor(entropy_eps, dtype=torch.float32, device=device)
-<<<<<<< HEAD
-            if wandb_mode != None:
-=======
             if wandb_mode == "TRAIN":
->>>>>>> e1be799e93bce2dd73812eb88e5bed709ac88a7e
                 wandb.log({"train/entropy_coef": entropy_eps})
 
     if wandb_mode == "TRAIN":
@@ -610,14 +606,14 @@ def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rol
         logs["action"] = eval_rollout["action"]
         
         # print("\nAction:\n", logs["action"], "shape:", logs["action"].shape) #logs["action"])
-        if log_actions:
-            # logs["action"] is [B, S, R*F],
-            B, S, RF = logs["action"].shape
-            F = env.base_env.scenario.num_feats  # or model_config["num_features"]
-            R = RF//F
-            actions = logs["action"].reshape(B, S, R, F).permute(1, 0, 2, 3)  # [S, B, R, N_feats]
-            print("Reshaped actions:", actions, "shape", actions.shape)
-            save_actions_to_csv(actions, render_fp)
+        # if log_actions:
+        #     # logs["action"] is [B, S, R*F],
+        #     B, S, RF = logs["action"].shape
+        #     F = env.base_env.scenario.num_feats  # or model_config["num_features"]
+        #     R = RF//F
+        #     actions = logs["action"].reshape(B, S, R, F).permute(1, 0, 2, 3)  # [S, B, R, N_feats]
+        #     print("Reshaped actions:", actions, "shape", actions.shape)
+        #     save_actions_to_csv(actions, render_fp)
 
         if wandb_mode == "TRAIN":
             wandb.log({"eval/mean_reward": eval_rollout["next", "reward"].mean().item()})
