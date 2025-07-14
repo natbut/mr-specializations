@@ -516,8 +516,8 @@ def create_env(scenario, device, env_config, scenario_config) -> TransformedEnv:
         Compose(
             # ObservationNorm(in_keys=["cell_feats"]),
             # ObservationNorm(in_keys=["cell_pos"]),
-            # ObservationNorm(in_keys=["rob_pos"]),
-            DoubleToFloat(in_keys=["cell_feats", "cell_pos", "rob_pos"]),
+            # ObservationNorm(in_keys=["rob_data"]),
+            DoubleToFloat(in_keys=["cell_feats", "cell_pos", "rob_data"]),
             StepCounter(),
         ),
         device=device,
@@ -544,7 +544,7 @@ def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agen
 
     policy_module = TensorDictModule(
         tf_act,
-        in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"), ("rob_pos"), ("num_robs")],
+        in_keys=[("cell_feats"), ("cell_pos"), ("num_cells"), ("rob_data"), ("num_robs")],
         out_keys=["loc","scale"]
     )
 

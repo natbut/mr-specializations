@@ -216,17 +216,17 @@ class EnvironmentTransformer(nn.Module):
         self.calls = 0
 
     # cell_lengths should be a tensor (B,) or (B, 1) indicating the actual number of cells
-    def forward(self, cell_features, cell_positions, num_cells, robot_positions, num_robots):
+    def forward(self, cell_features, cell_positions, num_cells, rob_data, num_robots):
         unbatched = False
         if cell_features.dim() == 2:
             unbatched = True
             cell_features = cell_features.unsqueeze(0)
             cell_positions = cell_positions.unsqueeze(0)
-            robot_positions = robot_positions.unsqueeze(0)
+            rob_data = rob_data.unsqueeze(0)
             num_cells = num_cells.unsqueeze(0) # Ensure cell_lengths is also batched
 
         B, N_padded, _ = cell_features.shape # N_padded is MAX_CELLS
-        R = robot_positions.size(1)  # R is padded to max_n_agents for env
+        R = rob_data.size(1)  # R is padded to max_n_agents for env
 
         # Create attention mask for padding
         # mask is (B, N_padded) boolean tensor, True where token should be ignored (padding)
@@ -251,10 +251,11 @@ class EnvironmentTransformer(nn.Module):
         # === Gather robot tokens ===
         with torch.no_grad():
             # Create robot mask: True where robot is real (not padding)
-            robot_mask = torch.arange(R, device=robot_positions.device).expand(B, R) < num_robots.unsqueeze(1)  # [B, R]
+            robot_mask = torch.arange(R, device=rob_data.device).expand(B, R) < num_robots.unsqueeze(1)  # [B, R]
             
             cell_pos_exp = cell_positions.unsqueeze(1)  # [B, 1, N_padded, 2]
-            robot_pos_exp = robot_positions.unsqueeze(2)  # [B, R, 1, 2]
+            robot_pos = rob_data[:, :, :2] # Extract only position from rob_data
+            robot_pos_exp = robot_pos.unsqueeze(2)  # [B, R, 1, 2]
             
             # Compute distances for all robots to all cells
             dists = torch.norm(robot_pos_exp - cell_pos_exp, dim=-1)  # [B, R, N_padded]
@@ -271,7 +272,7 @@ class EnvironmentTransformer(nn.Module):
             if bad_idx:
                 print("\n!!! ==> closest_idxs includes padding index!")
                 print("\tNum cells check:\n\t", num_cells)
-                print("\tRobot positions:\n\t", robot_positions)
+                print("\tRobot positions:\n\t", robot_pos)
                 print("\tDists:\n\t", dists)
 
         assert (num_cells > 0).all(), "Zero real cells in one or more batches!"
@@ -294,11 +295,19 @@ class EnvironmentTransformer(nn.Module):
 
         # === Add positional & agent-ID embeddings ===
         # For padded robots, their positions are meaningless, so mask their embeddings
-        robot_pos_enc = self.pos_embed(robot_positions)  # [B, R, D]
+        robot_pos_enc = self.pos_embed(robot_pos)  # [B, R, D]
         robot_pos_enc = robot_pos_enc * robot_mask.unsqueeze(-1)  # Zero out embeddings for padded robots
         robot_tokens = robot_tokens + robot_pos_enc
 
         # print("Added position encodings:", robot_tokens[:5])
+
+        # TODO - Try adding in this encoding. For now, handled by cell features.
+        # if self.agent_aggr_rew_enc:
+        #     aggr_rew = rob_data[:, :, -1] # Last feature is aggr reward
+        #     aggr_rew_enc = self.aggr_rew_embed(aggr_rew)
+        #     aggr_rew_enc = aggr_rew_enc[:, :R, :]  # Slice to match actual number of robots
+        #     aggr_rew_enc = aggr_rew_enc * robot_mask.unsqueeze(-1)  # Zero out embeddings for padded robots
+        #     robot_tokens = robot_tokens + aggr_rew_enc
 
         if self.agent_id_enc:
             id_indices = torch.arange(self.max_robots, device=robot_tokens.device)[None, :]
