@@ -249,7 +249,8 @@ def eval(scenario, scenario_configs, env_configs, model_configs, checkpt_fp, sav
     d_model = model_config["d_model"]
     agent_attn=model_config["agent_attn"]
     cell_pos_as_features=model_config["cell_pos_as_features"]
-    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, device)
+    agent_id_enc = model_config.get("agent_id_enc", True)
+    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, agent_id_enc, device)
     tf_act.load_state_dict(checkpt_data['actor_state_dict'])
     tf_act.eval()
 
@@ -310,7 +311,8 @@ def train_PPO(scenario,
     d_model = model_config["d_model"]
     agent_attn=model_config["agent_attn"]
     cell_pos_as_features=model_config["cell_pos_as_features"]
-    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, device)
+    agent_id_enc = model_config["agent_id_enc"]
+    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, agent_id_enc, device)
     tf_crit, value_module = create_critic(num_features, d_model, cell_pos_as_features, device)
 
     action_softmax = model_config.get("action_softmax", False)
@@ -533,13 +535,14 @@ def create_env(scenario, device, env_config, scenario_config) -> TransformedEnv:
 
     return env
 
-def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, device):
+def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, agent_id_enc, device):
     tf_act = EnvironmentTransformer(num_features=num_features,
                                         num_heuristics=num_heuristics,
                                         d_feedforward=d_feedforward,
                                         d_model=d_model,
                                         agent_attn=agent_attn,
                                         cell_pos_as_features=cell_pos_as_features,
+                                        agent_id_enc=agent_id_enc,
                                         ).to(device)
 
     policy_module = TensorDictModule(

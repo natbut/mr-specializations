@@ -141,7 +141,7 @@ class Scenario(BaseScenario):
         )
         
         self.agent_spawn_radius = 0.2
-        self.agent_disable_prob = 0.5
+        self.agent_disable_prob = 1.0
 
         ScenarioUtils.check_kwargs_consumed(kwargs) # Warn is not all kwargs have been consumed
 
