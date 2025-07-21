@@ -43,137 +43,75 @@ class VMASPlanningEnv(EnvBase):
         self.render_fp = None
         self.count = 0
 
-        # TODO Check kwargs passing
-        if self.num_envs == 1:
-            super().__init__(batch_size=[], device=device)
-            # VMAS Environment Configuration
-            self.sim_env = make_env(
-                                scenario=self.scenario,
-                                num_envs=1,
-                                max_steps=env_kwargs.pop("max_steps", 100),
-                                device=self.device,
-                                **scenario_kwargs,
-                                )
+        super().__init__(batch_size=[self.num_envs], device=device)
+        # VMAS Environment Configuration
+        self.sim_env = make_env(
+                            scenario=self.scenario,
+                            num_envs=self.batch_size[0],
+                            max_steps=env_kwargs.pop("max_steps", 100),
+                            device=self.device,
+                            **scenario_kwargs,
+                            )
+    
+        n_features = self.scenario.num_feats #self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
 
-            n_features = self.scenario.num_feats #self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
-            
-            # Define Observation & Action Specs
-            self.observation_spec = Composite(
-                obs=Composite(
-                    cell_feats=Unbounded(
-                        shape=(-1, n_features),
-                        dtype=torch.float64,
-                        device=device
-                        ),
-                    cell_pos=Unbounded(
-                        shape=(-1, 2),
-                        dtype=torch.float64,
-                        device=device
+        # MAX_CELLS = 100
+
+        # Define Observation & Action Specs
+        self.observation_spec = Composite(
+            # obs=Composite(
+                cell_feats=Unbounded(
+                    shape=(self.num_envs, -1, n_features),
+                    dtype=torch.float64,
+                    device=device
                     ),
-                    rob_pos=Unbounded(
-                        shape=(-1, 2), # (self.sim_env.n_agents, 2),
-                        dtype=torch.float64,
-                        device=device
-                    ),
+                cell_pos=Unbounded(
+                    shape=(self.num_envs, -1, 2),
+                    dtype=torch.float64,
                     device=device
                 ),
-                shape=(1,),
-                device=device
+                num_cells=Unbounded(
+                    shape=(self.num_envs,),
+                    dtype=torch.float32,
+                    device=device
+                ),
+                rob_data=Unbounded(
+                    shape=(self.num_envs, -1, 3), # (self.num_envs, self.sim_env.n_agents, 3)
+                    dtype=torch.float64,
+                    device=device
+                ),
+                num_robs=Unbounded(
+                    shape=(self.num_envs,),
+                    dtype=torch.float32,
+                    device=device
+                ),
+            #     device=device
+            # ),
+            shape=(self.num_envs,),
+            device=device
+        )
+
+        self.action_spec = Bounded(
+            low=-torch.ones((
+                            self.num_envs,
+                            self.sim_env.n_agents * self.n_heuristics
+                            ),
+                            device=device
+                            ),
+            high=torch.ones((
+                            self.num_envs,
+                            self.sim_env.n_agents * self.n_heuristics
+                            ),
+                            device=device
+                            ),
+            shape=(self.num_envs, self.sim_env.n_agents * self.n_heuristics),
+            device=device
+        ) # NOTE ADDED TO HAVE ALL ROBOTS AS ONE TRANSFORMER ACTION
+
+        self.reward_spec = Unbounded(
+            shape=(self.num_envs, 1),
+            device=device
             )
-
-            self.action_spec = Bounded(
-                low=-torch.ones((
-                                self.sim_env.n_agents,
-                                len(self.heuristic_eval_fns)
-                                ),
-                                device=device
-                                ),
-                high=torch.ones((
-                                self.sim_env.n_agents,
-                                len(self.heuristic_eval_fns)
-                                ),
-                                device=device
-                                ),
-                shape=(self.sim_env.n_agents, 
-                       len(self.heuristic_eval_fns)),
-                device=device
-            )
-
-            self.reward_spec = Unbounded(
-                shape=(1,), #(self.sim_env.n_agents),
-                device=device
-                )#, self.scenario.n_agents))
-
-        else:
-            super().__init__(batch_size=[self.num_envs], device=device)
-            # VMAS Environment Configuration
-            self.sim_env = make_env(
-                                scenario=self.scenario,
-                                num_envs=self.batch_size[0],
-                                max_steps=env_kwargs.pop("max_steps", 100),
-                                device=self.device,
-                                **scenario_kwargs,
-                                )
-        
-            n_features = self.scenario.num_feats #self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
-
-            # MAX_CELLS = 100
-
-            # Define Observation & Action Specs
-            self.observation_spec = Composite(
-                # obs=Composite(
-                    cell_feats=Unbounded(
-                        shape=(self.num_envs, -1, n_features),
-                        dtype=torch.float64,
-                        device=device
-                        ),
-                    cell_pos=Unbounded(
-                        shape=(self.num_envs, -1, 2),
-                        dtype=torch.float64,
-                        device=device
-                    ),
-                    num_cells=Unbounded(
-                        shape=(self.num_envs,),
-                        dtype=torch.float32,
-                        device=device
-                    ),
-                    rob_data=Unbounded(
-                        shape=(self.num_envs, -1, 3), # (self.num_envs, self.sim_env.n_agents, 3)
-                        dtype=torch.float64,
-                        device=device
-                    ),
-                    num_robs=Unbounded(
-                        shape=(self.num_envs,),
-                        dtype=torch.float32,
-                        device=device
-                    ),
-                #     device=device
-                # ),
-                shape=(self.num_envs,),
-                device=device
-            )
-
-            self.action_spec = Bounded(
-                low=-torch.ones((
-                                self.num_envs,
-                                self.sim_env.n_agents * self.n_heuristics
-                                ),
-                                device=device
-                                ),
-                high=torch.ones((
-                                self.num_envs,
-                                self.sim_env.n_agents * self.n_heuristics
-                                ),
-                                device=device
-                                ),
-                shape=(self.num_envs, self.sim_env.n_agents * self.n_heuristics),
-                device=device
-            ) # NOTE ADDED TO HAVE ALL ROBOTS AS ONE TRANSFORMER ACTION
-
-            self.reward_spec = Unbounded(
-                shape=(self.num_envs, 1),
-                device=device
-                )
             
         self.steps = 0
 

@@ -157,6 +157,14 @@ def goto_base(agent_obs, world_idx, sampled_pos):
     return torch.cdist(sampled_pos, base.unsqueeze(0)).squeeze(-1) #torch.norm(base - sampled_pos, dim=0)
 
 
+def goto_goal(agent_obs, world_idx, sampled_pos):
+    """
+    Given goal location, returns distance to goal
+    """
+    goal = agent_obs["manual_goal"]
+    return torch.cdist(sampled_pos, goal.unsqueeze(0)).squeeze(-1) #torch.norm(base - sampled_pos, dim=0)
+
+
 def min_dist(points_a, points_b):
     if len(points_a) == 0 or len(points_b) == 0:
         return torch.zeros(points_a.shape[0], device=points_a.device)

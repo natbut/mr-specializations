@@ -51,6 +51,9 @@ class PlanningAgent(Agent):
         self.obs = []
         self.trajs = []
         self.traj_idx = []
+        self.manual_goal = None
+        self.manual_goal_trajs = []
+        self.mode = "WORKER"
         self.sim_velocity = sim_velocity
         self.is_active = True
         
@@ -68,7 +71,9 @@ class PlanningAgent(Agent):
         
         
         super().__init__(name, shape, movable, rotatable, collide, density, mass, f_range, max_f, t_range, max_t, v_range, max_speed, color, alpha, obs_range, obs_noise, u_noise, u_range, u_multiplier, action_script, sensors, c_noise, silent, adversary, drag, linear_friction, angular_friction, gravity, collision_filter, render_action, dynamics, action_size, discrete_action_nvec)
-    
+
+    def set_mode(self, mode):
+        self.mode=mode
 
     def _compute_traj_rrt_paths(self,
                                  world_idx,
@@ -379,12 +384,28 @@ class PlanningAgent(Agent):
         Sampling-based search within radius defined by horizon. Observations from environment should
         allow us to evaluate value of each sampled point towards each heuristic.
         """
+        ARRIVED = 0.05
         
         if not self.is_active:
             return self.null_action
 
         current_pos = self.state.pos
         if verbose: print(f"Agent {self.name} heuristic weights:\n {heuristic_weights}")
+
+        # Update goal_pos (for HybDec testing)
+        # NOTE: This operation assumes non-vectorized environment (or at least a single env)
+        # If len_manual_goal_trajs is > 0, pop the first waypoint from manual_goal_trajs and set as self.manual_goal
+        if self.mode == "WORKER" and len(self.manual_goal_trajs) > 0:
+            if self.manual_goal == None:
+                self.manual_goal = self.manual_goal_trajs.pop(0)
+            self.obs["manual_goal"] = torch.tensor(self.manual_goal, dtype=torch.float32, device=self.device)
+            if torch.norm(current_pos - self.obs["manual_goal"]) < 5*ARRIVED:
+                self.manual_goal = self.manual_goal_trajs.pop(0)
+                self.obs["manual_goal"] = torch.tensor(self.manual_goal, dtype=torch.float32, device=self.device)
+        elif self.mode == "SUPPORT":
+            if self.manual_goal == None:
+                self.manual_goal = [0,0]
+            self.obs["manual_goal"] = torch.tensor(self.manual_goal, dtype=torch.float32, device=self.device)
 
         # Make plans on init
         target_waypt = []
@@ -406,7 +427,7 @@ class PlanningAgent(Agent):
 
         # Compute distances to target waypoints
         dists = torch.norm(current_pos_batch - target_waypt_batch, dim=1)
-        arrived = dists < 0.05
+        arrived = dists < ARRIVED
 
         # Update traj_idx for arrived agents
         old_idx = torch.tensor(self.traj_idx)
@@ -415,10 +436,6 @@ class PlanningAgent(Agent):
         self.traj_idx = [next_idx[i].item() if arrived[i] else old_idx[i].item() for i in range(len(self.traj_idx))]
 
         # For agents at end of trajectory, recompute trajectory
-        # print("ARRIVED:", arrived)
-        # print("OLD idx:", old_idx)
-        # print("TRAJ lens", traj_lens)
-        # print("NEXT idx", next_idx)
         for i, flag in enumerate(arrived):
             if flag and old_idx[i] == next_idx[i]:
                 if verbose and i == 0:
@@ -442,6 +459,14 @@ class PlanningAgent(Agent):
 
         return u_action
     
+
+    def set_mission_plan(self, plan, world_idx=0):
+        """Update local mission plan of goal locations"""
+        self.manual_goal_trajs = plan
+
+
+
+
 
     # ====== OLD FROM GRAPH-BASED NAV ======
 

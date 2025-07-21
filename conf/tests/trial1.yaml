@@ -1,0 +1,12 @@
+
+agent_assignments:
+- WORKER
+- WORKER
+- SUPPORT
+- SUPPORT
+
+rollout_steps: 2
+
+planning_iters: 3
+
+# predefined tasks
