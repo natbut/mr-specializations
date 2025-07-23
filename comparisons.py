@@ -24,6 +24,7 @@ sys.path.append(str(mcts_smop_path))
 
 from planner import HybDecPlanner
 from control.task import Task
+import csv
 
 def test_setup(test,
                scenario_configs,
@@ -81,7 +82,7 @@ def run_tests(scenario_configs,
               model_configs,
               checkpoint,
               comp_configs,
-              folder_path="test",
+              folder_path="test1",
               ):
     """Run tests to evaluate model vs comparison method."""
 
@@ -100,81 +101,110 @@ def run_tests(scenario_configs,
                                                 )
         
         env.base_env.render = True
-
-        # ---- Run test with policy ----
-        print(f"Preparing to run test {test} with policy...")
+        
         # Load in test parameters
+        num_runs = test_config["num_runs"]
         rollout_steps = test_config["rollout_steps"]
+        agent_assignments = test_config["agent_assignments"]
+        planning_iters = test_config["planning_iters"]
+        
+        plan_heuristic_fns = ["goto_goal", "neediest_comms_midpt", "nearest_agent"]
 
-        # Configure for eval with policy
-        render_name = f"render_policy"
-        render_fp = os.path.join(f"{folder_path}/gif/", render_name)
-        env.base_env.render_fp = render_fp
-        os.makedirs(os.path.dirname(render_fp), exist_ok=True)
+        data_dir = os.path.join(folder_path, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        csv_fp = os.path.join(data_dir, "results.csv")
+        csv_header = [
+            "test", "run",
+            "policy_reward_mean", "policy_reward_sum",
+            "planner_reward_mean", "planner_reward_sum"
+        ]
 
-        # TODO set policy heuristics back (might need to rework how I do this)
+        for run in range(num_runs):
 
-        # Run test & log   
-        with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
-            # execute a rollout with the trained policy
-            print("Running test...")
-            env.reset() # TODO seed
-            policy_rollout = env.rollout(rollout_steps, policy, return_contiguous=False)
-            logs["policy reward"].append(policy_rollout["next", "reward"].mean().item())
-            logs["policy reward (sum)"].append(
-                policy_rollout["next", "reward"].sum().item()
-            )
-            logs["action"] = policy_rollout["action"]
+            # ---- Run test with policy ----
+            print(f"Preparing to run test {test} with policy...")
+
+            # Configure for eval with policy
+            render_name = f"render_policy"
+            render_fp = os.path.join(f"{folder_path}/gif/", render_name)
+            env.base_env.render_fp = render_fp
+            os.makedirs(os.path.dirname(render_fp), exist_ok=True)
+
+            # Set heuristics for planning
+            env.base_env.reset_heuristic_eval_fns()
+            
+            # Run test & log   
+            with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
+                # execute a rollout with the trained policy
+                print("Running test...")
+                env.reset() # TODO seed
+                policy_rollout = env.rollout(rollout_steps, policy, return_contiguous=False)
+                policy_reward_mean = policy_rollout["next", "reward"].mean().item()
+                policy_reward_sum = policy_rollout["next", "reward"].sum().item()
+                logs["policy reward"].append(policy_reward_mean)
+                logs["policy reward (sum)"].append(policy_reward_sum)
+                logs["action"] = policy_rollout["action"]
 
             print("Mean reward policy:", logs["policy reward"])
 
-        # ---- Run test with planner ----
-        print("\nPreparing to run test with planner...")
-        # Load in agent assignments
-        agent_assignments = test_config["agent_assignments"]
-        planning_iters = test_config["planning_iters"]
+            # ---- Run test with planner ----
+            print("\nPreparing to run test with planner...")
+            # Load in agent assignments
 
-        # Configure for eval with planner
-        env.base_env.count = 0
-        render_name = f"render_planner"
-        render_fp = os.path.join(f"{folder_path}/gif/", render_name)
-        env.base_env.render_fp = render_fp
-        os.makedirs(os.path.dirname(render_fp), exist_ok=True)
+            # Configure for eval with planner
+            # env.base_env.count = 0
+            render_name = f"render_planner"
+            render_fp = os.path.join(f"{folder_path}/gif/", render_name)
+            env.base_env.render_fp = render_fp
+            os.makedirs(os.path.dirname(render_fp), exist_ok=True)
 
-        # Update heuristics for planning
-        plan_heuristic_fns = ["goto_goal", "neediest_comms_midpt", "nearest_agent"]
-        env.base_env.heuristic_eval_fns = [planning_env_vec.load_func(name) for name in plan_heuristic_fns]
-        # Update actions according to assignments
-        actions = []
-        agents = env.base_env.sim_env.scenario.active_agents
-        for i, assignment in enumerate(agent_assignments):
-            if assignment == "WORKER":
-                actions += [1, 0, 0]
-                agents[i].set_mode("WORKER")
-            elif assignment == "SUPPORT":
-                actions += [0, 1, -0.1]
-                agents[i].set_mode("SUPPORT")
-            else:
-                actions += [0, 0, 0]  # fallback/default
-        actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
+            # Update heuristics for planning
+            env.base_env.set_heuristic_eval_fns(plan_heuristic_fns)
 
-        # Run test & log
-        print("Running test...")
-        env.reset() # TODO seed
-        planner_rollout = rollout_with_planner(env,
-                                        actions,
-                                        planner,
-                                        sim_data,
-                                        rollout_steps,
-                                        planning_iters,
-                                        )
-        logs["planner reward"].append(planner_rollout["reward"]/rollout_steps)
-        logs["planner reward (sum)"].append(
-            planner_rollout["reward"])
+            # Update actions according to assignments
+            actions = []
+            agents = env.base_env.sim_env.scenario.active_agents
+            for i, assignment in enumerate(agent_assignments):
+                if assignment == "WORKER":
+                    actions += [1, 0, 0]
+                    agents[i].set_mode("WORKER")
+                elif assignment == "SUPPORT":
+                    actions += [1, 0, 0]
+                    agents[i].set_mode(f"SUPPORT_{i}")
+                else:
+                    actions += [0, 0, 0]  # fallback/default
+            actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
+
+            # Run test & log
+            print("Running test...")
+            env.reset() # TODO seed
+            planner_rollout = rollout_with_planner(env,
+                            actions,
+                            planner,
+                            sim_data,
+                            rollout_steps,
+                            planning_iters,
+                            )
+            planner_reward_mean = planner_rollout["reward"]/rollout_steps
+            planner_reward_sum = planner_rollout["reward"]
+            logs["planner reward"].append(planner_reward_mean)
+            logs["planner reward (sum)"].append(planner_reward_sum)
+            
+            print("Mean reward planner:", logs["planner reward"])
+
+            # ---- Save results to CSV ----
+            write_header = not os.path.exists(csv_fp)
+            with open(csv_fp, mode="a", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                if write_header:
+                    writer.writerow(csv_header)
+                writer.writerow([
+                    test, run,
+                    policy_reward_mean, policy_reward_sum,
+                    planner_reward_mean, planner_reward_sum
+                ])
         
-        print("Mean reward planner:", logs["planner reward"])
-        
-    print("Done!")
+        print("Done!")
 
 
 def rollout_with_planner(env: TransformedEnv,
@@ -191,8 +221,7 @@ def rollout_with_planner(env: TransformedEnv,
     logs["reward"] = 0.0
 
     # Update agent planning observations
-    tasks_pos = agents[0].obs["obs_tasks"][0].squeeze().tolist()
-    workers_pos = [a.state.pos.tolist() for a in scen.active_agents if a.mode == "WORKER"]
+    tasks_pos, workers_pos = get_updated_tasks_workers(agents)
     base_pos = scen.base.state.pos.squeeze().tolist() + [0.0] # 3D pos add Z
     
     # Create task dict
@@ -208,14 +237,13 @@ def rollout_with_planner(env: TransformedEnv,
     planner.prepare_init_plans(task_dict, workers_pos, base_pos)
     
     # For step in rollout_steps:
-    for _ in range(rollout_steps):
+    for step in range(rollout_steps):
 
         # Update goal assignments
         i = 0
         for agent in agents:
             if agent.mode == "WORKER":
                 # Manually set schedule goals according to planner
-                # TODO implement this
                 agent.set_mission_plan(planner.get_agent_plan(i))
                 i += 1
 
@@ -223,22 +251,35 @@ def rollout_with_planner(env: TransformedEnv,
         tdict = env.base_env._step(actions)
         logs["reward"] += tdict["reward"].item()
 
-        # Create next plan 
-        # Update agent planning observations
-        tasks_pos = agents[0].obs["obs_tasks"][0].squeeze().tolist()
-        workers_pos = [a.state.pos.squeeze().tolist()+[0.0] for a in scen.active_agents if a.mode == "WORKER"]
-        print("Workers pos:", workers_pos)
-        print("Tasks pos:", tasks_pos)
-        for i, pos in enumerate(tasks_pos):
-            pos += [0.0] # 3D pos add Z
-            task_dict["v"+str(i)] = Task("v"+str(i), pos, 1, 1) # work 1, reward 1
-            
-        task_dict[sim_data["end"]] = Task(sim_data["end"], base_pos, 0, 1)
+        # Create next plan (if steps remain)
+        task_dict = {}
+        if step < rollout_steps-1:
+            # Update agent planning observations
+            tasks_pos, workers_pos = get_updated_tasks_workers(agents)
+            for j, pos in enumerate(tasks_pos):
+                pos += [0.0] # 3D pos add Z
+                task_dict["v"+str(j)] = Task("v"+str(j), pos, 1, 1) # work 1, reward 1
+            task_dict[sim_data["rob_task"]] = Task(sim_data["rob_task"], base_pos, 0, 1) # Will be overwritten in planner
+            task_dict[sim_data["end"]] = Task(sim_data["end"], base_pos, 0, 1)
 
-        # Create plans
-        planner.solve_worker_schedules(workers_pos, task_dict, planning_iters)
+            # Create plans
+            planner.solve_worker_schedules(workers_pos, task_dict, planning_iters)
 
     return logs
+
+def get_updated_tasks_workers(agents):
+    """Process new observations from environment"""
+
+    return_task_pos = []
+    tasks_pos = agents[0].obs["obs_tasks"][0].squeeze().tolist()
+    print("TASKS POS:", tasks_pos)
+    for t in tasks_pos:
+        if t[0] < 2.0: return_task_pos.append(t)
+    print("RETURN TASKS POS:", return_task_pos)
+    workers_pos = [a.state.pos.squeeze().tolist()+[0.0] for a in agents if a.mode == "WORKER"]
+
+    return return_task_pos, workers_pos
+
 
 def generate_planner_data(scenario_config, solver_config):
     """Load data into correct configurations for solver"""

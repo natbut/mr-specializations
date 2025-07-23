@@ -316,8 +316,11 @@ def train_PPO(scenario,
     tf_crit, value_module = create_critic(num_features, d_model, cell_pos_as_features, device)
 
     action_softmax = model_config.get("action_softmax", False)
+    action_max = model_config.get("action_max", False)
     if action_softmax:
         env.use_softmax = True
+    elif action_max:
+        env.use_max = True
 
     print("Running policy:", policy_module(env.reset()))
     print("Running value:", value_module(env.reset())) # NOTE leave this in to init lazy modules

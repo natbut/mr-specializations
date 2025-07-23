@@ -399,13 +399,19 @@ class PlanningAgent(Agent):
             if self.manual_goal == None:
                 self.manual_goal = self.manual_goal_trajs.pop(0)
             self.obs["manual_goal"] = torch.tensor(self.manual_goal, dtype=torch.float32, device=self.device)
-            if torch.norm(current_pos - self.obs["manual_goal"]) < 5*ARRIVED:
+            if torch.norm(current_pos - self.obs["manual_goal"]) < 0.075: # Task completion range
                 self.manual_goal = self.manual_goal_trajs.pop(0)
                 self.obs["manual_goal"] = torch.tensor(self.manual_goal, dtype=torch.float32, device=self.device)
-        elif self.mode == "SUPPORT":
-            if self.manual_goal == None:
-                self.manual_goal = [0,0]
-            self.obs["manual_goal"] = torch.tensor(self.manual_goal, dtype=torch.float32, device=self.device)
+        elif "SUPPORT" in self.mode:
+            # Set manual goal to be a comms midpt
+            # Compute midpoints between agents-agents and agents-base
+            agents_pos = self.obs["obs_agents"][0] # for single-world case
+            base_pos = self.obs["obs_base"][0] # for single-world case
+            comms_midpts = (agents_pos + base_pos) / 2.0
+            support_id = int(self.mode[-1]) - 2 # Assign robot to to robot 0, and so on (assumes 2 workers)
+            # if self.manual_goal == None:
+            #     self.manual_goal = [0,0]
+            self.obs["manual_goal"] = torch.tensor(comms_midpts[support_id], dtype=torch.float32, device=self.device)
 
         # Make plans on init
         target_waypt = []
@@ -462,6 +468,8 @@ class PlanningAgent(Agent):
 
     def set_mission_plan(self, plan, world_idx=0):
         """Update local mission plan of goal locations"""
+        print("Set agent mission plan:", plan)
+        self.manual_goal = None
         self.manual_goal_trajs = plan
 
 

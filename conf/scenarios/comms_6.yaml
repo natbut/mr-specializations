@@ -7,8 +7,6 @@ max_n_tasks: 10
 max_n_obstacles: 10
 num_feats: 7
 
-variable_team_size: False
-
 agent_radius: 0.03
 
 world_spawning_x: 1

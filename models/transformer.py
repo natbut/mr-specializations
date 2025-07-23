@@ -184,8 +184,8 @@ class EnvironmentTransformer(nn.Module):
         else:
             self.feature_embed = nn.Linear(num_features, d_model)
         self.pos_embed = PositionalEncoding(d_model)
-        if agent_id_enc:
-            self.agent_embed = nn.Embedding(max_robots, d_model)
+        # if agent_id_enc:
+        self.agent_embed = nn.Embedding(max_robots, d_model)
 
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
