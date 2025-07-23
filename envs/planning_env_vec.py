@@ -29,9 +29,8 @@ class VMASPlanningEnv(EnvBase):
         
         self.scenario = scenario
 
-        self.heuristic_eval_fns = env_kwargs.pop("heuristic_fns", None)
-        self.heuristic_eval_fns = [load_func(name) for name in self.heuristic_eval_fns]
-        self.n_heuristics = len(self.heuristic_eval_fns)
+        self.heuristic_eval_fns_names = env_kwargs.pop("heuristic_fns", None)
+        self.set_heuristic_eval_fns(self.heuristic_eval_fns_names)
         self.num_envs = env_kwargs.pop("num_envs", 1)
         self.horizon = env_kwargs.pop("horizon", 0.25)
         self.planning_pts = env_kwargs.pop("planning_pts", 30)
@@ -39,6 +38,7 @@ class VMASPlanningEnv(EnvBase):
         self.render = env_kwargs.pop("render", False)
 
         self.use_softmax = False
+        self.use_max = False
 
         self.render_fp = None
         self.count = 0
@@ -115,6 +115,16 @@ class VMASPlanningEnv(EnvBase):
             
         self.steps = 0
 
+    def set_heuristic_eval_fns(self, fns: list):
+        """Temporarily set eval fns to those provided"""
+        self.heuristic_eval_fns = [load_func(name) for name in fns]
+        self.n_heuristics = len(self.heuristic_eval_fns)
+
+    def reset_heuristic_eval_fns(self):
+        """Reset eval fns to stored fns"""
+        self.heuristic_eval_fns = [load_func(name) for name in self.heuristic_eval_fns_names]
+        self.n_heuristics = len(self.heuristic_eval_fns)
+
     def _reset(self, obs_tensordict=None) -> TensorDict:
         """Reset all VMAS worlds and return initial state."""
         sim_obs = self.sim_env.reset() # Gets global obs from agent 0
@@ -144,6 +154,11 @@ class VMASPlanningEnv(EnvBase):
         ) # Breaks weights apart per-robot
         if self.use_softmax:
             heuristic_weights = torch.softmax(heuristic_weights, dim=-1)
+        if self.use_max:
+            # Set the max value in each H vector to 1, others to 0
+            max_indices = torch.argmax(heuristic_weights, dim=-1, keepdim=True)
+            heuristic_weights = torch.zeros_like(heuristic_weights)
+            heuristic_weights.scatter_(-1, max_indices, 1.0)
         if self.render:
             print(f"\nHeuristic Weights:\n {heuristic_weights} Shape: {heuristic_weights.shape}") # [B, N_AGENTS, N_FEATS]
         # print("WEIGHTS SAMPLE:", heuristic_weights[:5], "shape:", heuristic_weights.shape)
@@ -172,20 +187,12 @@ class VMASPlanningEnv(EnvBase):
                     i += 1
                 else:
                     u_action.append(agent.null_action)
-            # print(f"Planing took {time.time() - t_start} s")
-            # t_start = time.time()
-            # print("U-ACTION:", u_action)
+
+            # BURST TASK SPAWNING (ONLY ON LAST STEP)
             if t == self.macro_step-1 and self.sim_env.scenario.spawn_tasks_burst:
                 self.sim_env.scenario.spawn_tasks(attempts=self.macro_step)
             sim_obs, rews, dones, _ = self.sim_env.step(u_action)
-            # print(f"Step took {time.time() - t_start} s")
-            # print("Rewards:", rewards, "stacked rews:", rews, "sum:", rews.sum(dim=0))
 
-            # NOTE Ignores additional rewards from envs that reset during rollout (from completing early)
-                # Hypothesis here is that envs reset at done indices and continue to accumulate negative rewards
-                # Ideally, we won't even step completed envs, but this is a quick fix for now
-            # done = done.unsqueeze(1)
-            # dones = torch.where(done == True, done, dones)
             team_rews = torch.stack(rews).sum(dim=0)
             rewards += team_rews #torch.where(dones == False, team_rews, null_rews)
 

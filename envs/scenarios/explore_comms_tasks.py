@@ -136,6 +136,18 @@ class Scenario(BaseScenario):
             "rew_only_if_comms", False
         )
         
+        self.warm_start_tasks = kwargs.pop(
+            "warm_start_tasks", False
+        )
+
+        if self.warm_start_tasks:
+            self.warm_start_range = kwargs.pop(
+            "warm_start_range", 1.0
+            )
+            self.warm_start_spawn_attempts = kwargs.pop(
+            "warm_start_spawn_attempts", 50
+            )
+
         self.min_collision_distance = (
             0.005  # Minimum distance between entities for collision trigger
         )
@@ -397,6 +409,15 @@ class Scenario(BaseScenario):
         self.tasks_pos = torch.stack(
             [t.state.pos for t in self.tasks], dim=1)
         self._update_exploration()
+
+        # OPT. SPAWN INITIAL TASKS
+        if self.warm_start_tasks:
+            self._update_exploration(manual_range=self.warm_start_range)
+            # if doing global spawning, then need to enable global cell observations
+            if self.spawn_tasks_burst:
+                self.spawn_tasks(attempts=self.warm_start_spawn_attempts, enforce_spawn=True)
+            else:
+                self.spawn_tasks(enforce_spawn=True)
         
         # UPDATE FRONTIERS
         self.frontiers = self._get_frontier_pts()
@@ -474,7 +495,13 @@ class Scenario(BaseScenario):
 
         return rews.unsqueeze(-1) # [B,1]
     
-    def _update_exploration(self):
+    def _update_exploration(self, epsilon = 1e-6, manual_range=None):
+
+        if manual_range:
+            in_cell_range = manual_range
+        else:
+            in_cell_range = self.discrete_resolution / 2 + epsilon
+
         # Mark cells as explored if any agent is within the square bounds of the cell
         # For each cell, check if any agent is within half the cell width/height in both x and y
         cell_centers = self.discrete_cell_centers  # [B, N_cells, 2]
@@ -482,8 +509,7 @@ class Scenario(BaseScenario):
         # Expand dims for broadcasting: [B, N_cells, 1, 2] - [B, 1, N_agents, 2]
         diff = (cell_centers.unsqueeze(2) - agent_pos.unsqueeze(1)).abs()
         # Add a small epsilon to include boundary cases due to floating point precision
-        epsilon = 1e-6 # NOTE: added in small epsilon to avoid precision issues for robot cell placement.
-        in_cell = (diff[..., 0] <= self.discrete_resolution / 2 + epsilon) & (diff[..., 1] <= self.discrete_resolution / 2 + epsilon)
+        in_cell = (diff[..., 0] <= in_cell_range) & (diff[..., 1] <= in_cell_range)
         in_cell = in_cell.any(dim = -1) # Collapse to [B, N_cells]
         # print("In cell:", in_cell, "shape:", in_cell.shape, "Discrete explore shape:", self.discrete_cell_explored.shape)
         # If any agent is in the cell, mark as explored
@@ -1006,7 +1032,7 @@ class Scenario(BaseScenario):
 
         return global_obs
     
-    def spawn_tasks(self, attempts=1, verbose=False):
+    def spawn_tasks(self, attempts=1, enforce_spawn=False, verbose=False):
         explored_cell_centers = [self.discrete_cell_centers[b, ids] for b, ids in enumerate(self.explored_cell_ids)]
         occupied_positions_agents = [self.agents_pos]
 
@@ -1026,7 +1052,10 @@ class Scenario(BaseScenario):
                 # == SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY) ==
                 # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
                 for idx in range(self.world.batch_dim):
-                    spawn_prob = self.tasks_respawn_rate * len(explored_cell_centers[idx])
+                    if enforce_spawn and i == 0: # enforces at least 1 task spawn
+                        spawn_prob = 1.0
+                    else:
+                        spawn_prob = self.tasks_respawn_rate * len(explored_cell_centers[idx])
                     if verbose: print("Spawn prob:", spawn_prob)
                     if self.stored_tasks[idx,i].any() and np.random.random() < spawn_prob:
                         if verbose: print("Spawning task", i, " in world", idx)

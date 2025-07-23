@@ -5,8 +5,10 @@ agent_assignments:
 - SUPPORT
 - SUPPORT
 
-rollout_steps: 2
+num_runs: 10
 
-planning_iters: 3
+rollout_steps: 8
+
+planning_iters: 1
 
 # predefined tasks
