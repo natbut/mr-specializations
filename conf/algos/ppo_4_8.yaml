@@ -12,5 +12,5 @@ clip_epsilon: 0.2  # clip value for PPO loss: see the equation in the intro for 
 
 gamma: 0.99
 lambda: 0.95
-entropy_eps: 0.01
+entropy_eps: 0.01 # NOTE RETURN TO 0.01
 decay_entropy: True

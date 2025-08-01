@@ -82,9 +82,12 @@ def run_tests(scenario_configs,
               model_configs,
               checkpoint,
               comp_configs,
-              folder_path="test1",
+              folder_path="test",
               ):
     """Run tests to evaluate model vs comparison method."""
+
+    TASKS_ONLY = [1, 0, 0, 0, 0, 0]
+    COMMS_ONLY = [0, 0, 0, 0, 1, 0]
 
     ### CYCLE THROUGH TEST CONFIGS ###
     for test in range(max(len(scenario_configs), len(env_configs), len(model_configs))):
@@ -116,48 +119,73 @@ def run_tests(scenario_configs,
         csv_header = [
             "test", "run",
             "policy_reward_mean", "policy_reward_sum",
+            "h_tasks_reward_mean", "h_tasks_reward_sum",
+            "h_split_reward_mean", "h_split_reward_sum",
             "planner_reward_mean", "planner_reward_sum"
         ]
 
         for run in range(num_runs):
+
+            seed = TensorDict({"seed": torch.tensor([run,])}, batch_size=[1])
 
             # ---- Run test with policy ----
             print(f"Preparing to run test {test} with policy...")
 
             # Configure for eval with policy
             render_name = f"render_policy"
-            render_fp = os.path.join(f"{folder_path}/gif/", render_name)
+            render_fp = os.path.join(f"{folder_path}/gif/policy/", render_name)
             env.base_env.render_fp = render_fp
+            env.base_env.count = run*rollout_steps
             os.makedirs(os.path.dirname(render_fp), exist_ok=True)
 
-            # Set heuristics for planning
+            # Set heuristics for policy
             env.base_env.reset_heuristic_eval_fns()
             
             # Run test & log   
-            with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
-                # execute a rollout with the trained policy
-                print("Running test...")
-                env.reset() # TODO seed
-                policy_rollout = env.rollout(rollout_steps, policy, return_contiguous=False)
-                policy_reward_mean = policy_rollout["next", "reward"].mean().item()
-                policy_reward_sum = policy_rollout["next", "reward"].sum().item()
-                logs["policy reward"].append(policy_reward_mean)
-                logs["policy reward (sum)"].append(policy_reward_sum)
-                logs["action"] = policy_rollout["action"]
+            policy_reward_mean, policy_reward_sum = run_policy(env, logs, policy, rollout_steps, seed=seed)
+            print("Mean reward policy:", logs["policy reward (mean)"])
 
-            print("Mean reward policy:", logs["policy reward"])
+
+            # ---- Run test with h_tasks only ----
+            
+            # Fix agent actions
+            agents = env.base_env.sim_env.scenario.active_agents
+            actions = []
+            for _ in agents:
+                actions += TASKS_ONLY
+            actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
+
+            # Run test & log
+            h_tasks_reward_mean, h_tasks_reward_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="all_tasks", seed=seed, folder_path=folder_path)            
+            print("Mean all_tasks heuristics:", logs["all_tasks reward (mean)"])
+
+
+             # ---- Run test with split h_tasks, h_comms ----
+            
+            # Fix agent actions
+            agents = env.base_env.sim_env.scenario.active_agents
+            actions = []
+            for i, _ in enumerate(agents):
+                if i % 2 == 0:
+                    actions += TASKS_ONLY
+                else:
+                    actions += COMMS_ONLY
+            actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
+
+            # Run test & log
+            h_split_reward_mean, h_split_reward_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="split", seed=seed, folder_path=folder_path)      
+            print("Mean split heuristics:", logs["split h reward (mean)"])
+
 
             # ---- Run test with planner ----
             print("\nPreparing to run test with planner...")
-            # Load in agent assignments
-
-            # Configure for eval with planner
-            # env.base_env.count = 0
             render_name = f"render_planner"
-            render_fp = os.path.join(f"{folder_path}/gif/", render_name)
+            render_fp = os.path.join(f"{folder_path}/gif/planner/", render_name)
             env.base_env.render_fp = render_fp
+            env.base_env.count = run*rollout_steps
             os.makedirs(os.path.dirname(render_fp), exist_ok=True)
 
+            # Configure for eval with planner
             # Update heuristics for planning
             env.base_env.set_heuristic_eval_fns(plan_heuristic_fns)
 
@@ -177,20 +205,25 @@ def run_tests(scenario_configs,
 
             # Run test & log
             print("Running test...")
-            env.reset() # TODO seed
-            planner_rollout = rollout_with_planner(env,
-                            actions,
-                            planner,
-                            sim_data,
-                            rollout_steps,
-                            planning_iters,
-                            )
-            planner_reward_mean = planner_rollout["reward"]/rollout_steps
-            planner_reward_sum = planner_rollout["reward"]
-            logs["planner reward"].append(planner_reward_mean)
+            env.reset(seed) # TODO seed
+            # env.base_env._set_seed(run)
+            planner_rollout_rewards = rollout_with_planner(env,
+                                        actions,
+                                        planner,
+                                        sim_data,
+                                        rollout_steps,
+                                        planning_iters,
+                                        )
+            planner_reward_sum = sum(planner_rollout_rewards[1:])
+            planner_reward_mean = planner_reward_sum / len(planner_rollout_rewards[1:])
+            logs["planner reward (mean)"].append(planner_reward_mean)
             logs["planner reward (sum)"].append(planner_reward_sum)
             
-            print("Mean reward planner:", logs["planner reward"])
+            print("Mean reward planner:", logs["planner reward (mean)"])
+
+            for a in agents:
+                a.set_mode("NoMode")
+
 
             # ---- Save results to CSV ----
             write_header = not os.path.exists(csv_fp)
@@ -201,10 +234,67 @@ def run_tests(scenario_configs,
                 writer.writerow([
                     test, run,
                     policy_reward_mean, policy_reward_sum,
+                    h_tasks_reward_mean, h_tasks_reward_sum,
+                    h_split_reward_mean, h_split_reward_sum,
                     planner_reward_mean, planner_reward_sum
                 ])
         
         print("Done!")
+
+def run_fixed_heuristics(env: TransformedEnv, logs: defaultdict, actions, rollout_steps: int, name: str, seed, folder_path="test"):
+    print("Running fixed heuristics...")
+    render_name = f"render_{name}"
+    render_fp = os.path.join(f"{folder_path}/gif/{name}/", render_name)
+    env.base_env.render_fp = render_fp
+    env.base_env.count = seed["seed"][0]*rollout_steps
+    os.makedirs(os.path.dirname(render_fp), exist_ok=True)
+
+    env.reset(seed) # TODO seed
+    # env.base_env._set_seed(seed)
+    fixed_rollout_rewards = rollout_fixed_actions(env, actions, rollout_steps)
+    reward_sum = sum(fixed_rollout_rewards[1:])
+    reward_mean = reward_sum / len(fixed_rollout_rewards[1:])
+    logs[name + " reward (mean)"].append(reward_mean)
+    logs[name + " reward (sum)"].append(reward_sum)
+
+    return reward_mean, reward_sum
+
+def run_policy(env: TransformedEnv, logs: defaultdict, policy, rollout_steps: int, seed):
+    with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
+        # execute a rollout with the trained policy
+        print("Running policy...")
+        env.reset(seed) # TODO seed
+        # env.base_env._set_seed(seed)
+        policy_rollout = env.rollout(rollout_steps, policy, return_contiguous=False)
+        print("Policy reward shape:", policy_rollout["next", "reward"].shape)
+        policy_reward_mean = policy_rollout["next", "reward"][0][1:].mean().item()  # Skip first step (startup)
+        policy_reward_sum = policy_rollout["next", "reward"][0][1:].sum().item()  # Skip first step (startup)
+        logs["policy reward (mean)"].append(policy_reward_mean)
+        logs["policy reward (sum)"].append(policy_reward_sum)
+        logs["action"] = policy_rollout["action"]
+
+    return policy_reward_mean, policy_reward_sum
+
+
+def rollout_fixed_actions(env: TransformedEnv,
+                            actions,
+                            rollout_steps: int,
+                            ):
+    logs = {}
+    logs["reward"] = 0.0
+    rewards = []
+    # For step in rollout_steps:
+    for i in range(rollout_steps):
+
+        # Roll out plan
+        tdict = env.base_env._step(actions)
+        rewards.append(tdict["reward"].item())
+
+    
+    # logs["reward"] += tdict["reward"].item()
+
+    return rewards
+
 
 
 def rollout_with_planner(env: TransformedEnv,
@@ -219,6 +309,7 @@ def rollout_with_planner(env: TransformedEnv,
 
     logs = {}
     logs["reward"] = 0.0
+    rewards = []
 
     # Update agent planning observations
     tasks_pos, workers_pos = get_updated_tasks_workers(agents)
@@ -250,6 +341,7 @@ def rollout_with_planner(env: TransformedEnv,
         # Roll out plan
         tdict = env.base_env._step(actions)
         logs["reward"] += tdict["reward"].item()
+        rewards.append(tdict["reward"].item())
 
         # Create next plan (if steps remain)
         task_dict = {}
@@ -259,19 +351,19 @@ def rollout_with_planner(env: TransformedEnv,
             for j, pos in enumerate(tasks_pos):
                 pos += [0.0] # 3D pos add Z
                 task_dict["v"+str(j)] = Task("v"+str(j), pos, 1, 1) # work 1, reward 1
-            task_dict[sim_data["rob_task"]] = Task(sim_data["rob_task"], base_pos, 0, 1) # Will be overwritten in planner
-            task_dict[sim_data["end"]] = Task(sim_data["end"], base_pos, 0, 1)
+            task_dict[sim_data["rob_task"]] = Task(sim_data["rob_task"][:], base_pos[:], 0, 1) # Will be overwritten in planner
+            task_dict[sim_data["end"]] = Task(sim_data["end"][:], base_pos[:], 0, 1)
 
             # Create plans
             planner.solve_worker_schedules(workers_pos, task_dict, planning_iters)
 
-    return logs
+    return rewards
 
 def get_updated_tasks_workers(agents):
     """Process new observations from environment"""
 
     return_task_pos = []
-    tasks_pos = agents[0].obs["obs_tasks"][0].squeeze().tolist()
+    tasks_pos = agents[0].obs["obs_tasks"][0].squeeze().tolist()[:]
     print("TASKS POS:", tasks_pos)
     for t in tasks_pos:
         if t[0] < 2.0: return_task_pos.append(t)
@@ -340,7 +432,7 @@ def generate_planner_data(scenario_config, solver_config):
 if __name__ == "__main__":
 
     if len(sys.argv) < 6:
-        print("Usage: python run_tests.py <scenario_fp> <env_fp> <test_fp> <model_fp> <checkpt_fp> <comp_fp>")
+        print("Usage: python run_tests.py <scenario_fp> <env_fp> <test_fp> <model_fp> <checkpt_fp> <comp_fp> <folder_name>")
         sys.exit(1)
 
     scenario_fp = sys.argv[1]
@@ -349,6 +441,7 @@ if __name__ == "__main__":
     model_fp = sys.argv[4]
     checkpt_fp = sys.argv[5]
     comp_fp = sys.argv[6]
+    test_folder_name = sys.argv[7]
 
     # Env, Scenario & params
     scenario = Scenario()  
@@ -383,8 +476,9 @@ if __name__ == "__main__":
               model_configs,
               checkpoint,
               comp_configs,
+              folder_path=test_folder_name
               )
     
 
 
-# python comparisons.py "conf/scenarios/comms_5.yaml" "conf/envs/planning_env_explore_5_1env.yaml" "conf/tests/trial1.yaml" "conf/models/mat_2_3.yaml" "runs\comms_5_planning_env_explore_5_ppo_4_7_mat_2_3\checkpoints\best.pt" "conf/hybdec/config1.yaml"
+# python comparisons.py "conf/scenarios/comms_5_eval.yaml" "conf/envs/planning_env_explore_5_1env.yaml" "conf/tests/trial1.yaml" "conf/models/mat_2_3.yaml" "runs\comms_5_planning_env_explore_5_ppo_4_7_mat_2_3\checkpoints\best.pt" "conf/hybdec/solver1.yaml"

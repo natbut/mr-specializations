@@ -148,6 +148,19 @@ class Scenario(BaseScenario):
             "warm_start_spawn_attempts", 50
             )
 
+        self.enforce_task_spawn = kwargs.pop(
+            "enforce_task_spawn", False
+            )
+        
+        self.task_range_min = kwargs.pop(
+            "task_range_min", None
+        )
+
+        self.fixed_task_spawn_prob = kwargs.pop(
+            "fixed_task_spawn_prob", None
+        )
+
+
         self.min_collision_distance = (
             0.005  # Minimum distance between entities for collision trigger
         )
@@ -415,9 +428,9 @@ class Scenario(BaseScenario):
             self._update_exploration(manual_range=self.warm_start_range)
             # if doing global spawning, then need to enable global cell observations
             if self.spawn_tasks_burst:
-                self.spawn_tasks(attempts=self.warm_start_spawn_attempts, enforce_spawn=True)
+                self.spawn_tasks(attempts=self.warm_start_spawn_attempts)#, enforce_spawn=True)
             else:
-                self.spawn_tasks(enforce_spawn=True)
+                self.spawn_tasks()#enforce_spawn=True)
         
         # UPDATE FRONTIERS
         self.frontiers = self._get_frontier_pts()
@@ -1032,7 +1045,22 @@ class Scenario(BaseScenario):
 
         return global_obs
     
-    def spawn_tasks(self, attempts=1, enforce_spawn=False, verbose=False):
+    def spawn_tasks(self, 
+                    attempts=1, 
+                    # enforce_spawn=False, 
+                    # range_from_base=None, 
+                    # fixed_spawn_prob=None, 
+                    verbose=False
+                    ):
+        """
+        Spawns tasks into environment
+
+        Args: 
+            attempts: number of attempts to spawn each candidate task
+            enforce_spawn: if True, enforces at least 1 task spawns
+            range_from_base: sets a minimum range from base for tasks to be eligible to spawn
+            fixed_spawn_prob: sets static task spawn probability (as opposed to dynamically computing from explored cells)
+        """
         explored_cell_centers = [self.discrete_cell_centers[b, ids] for b, ids in enumerate(self.explored_cell_ids)]
         occupied_positions_agents = [self.agents_pos]
 
@@ -1052,8 +1080,10 @@ class Scenario(BaseScenario):
                 # == SPAWN IN TASKS TO EXPLORED REGIONS (OCCASIONALLY) ==
                 # 1) Grab random explored cell. 2) Use cell dims for x_bounds and y_bounds
                 for idx in range(self.world.batch_dim):
-                    if enforce_spawn and i == 0: # enforces at least 1 task spawn
+                    if self.enforce_task_spawn and i == 0: # enforces at least 1 task spawn
                         spawn_prob = 1.0
+                    elif self.fixed_task_spawn_prob is not None:
+                        spawn_prob = self.fixed_task_spawn_prob
                     else:
                         spawn_prob = self.tasks_respawn_rate * len(explored_cell_centers[idx])
                     if verbose: print("Spawn prob:", spawn_prob)
@@ -1061,8 +1091,24 @@ class Scenario(BaseScenario):
                         if verbose: print("Spawning task", i, " in world", idx)
                         spawn_pos = []
                         rand_cell_idx = torch.randint(explored_cell_centers[idx].shape[0], (1,)).item()
-                        rand_cell_center = explored_cell_centers[idx][rand_cell_idx].tolist()
+                        rand_cell_center = explored_cell_centers[idx][rand_cell_idx]
+
+                        if self.task_range_min is not None:
+                            # Enforce that cell centers are range_from_base distance from base
+                            dist = torch.norm((rand_cell_center - self.base.state.pos))
+                            max_checks = len(explored_cell_centers[idx])
+                            count = 0
+                            while dist < self.task_range_min and count < max_checks:
+                                rand_cell_idx = torch.randint(explored_cell_centers[idx].shape[0], (1,)).item()
+                                rand_cell_center = explored_cell_centers[idx][rand_cell_idx]
+                                dist = torch.norm((rand_cell_center - self.base.state.pos))
+                                count += 1
+                            if count >= max_checks:
+                                # no valid cells
+                                continue
+
                         if verbose: print("\nRand cell center:", rand_cell_center)
+                        rand_cell_center = rand_cell_center.tolist()
 
                         rand_pos = ScenarioUtils.find_random_pos_for_entity(
                             occupied_positions[idx],
@@ -1145,8 +1191,8 @@ class Scenario(BaseScenario):
 
         # Plot communication lines
         if self.comms_rew_decay_max > 0:
-            for i, agent1 in enumerate(self.active_agents):
-                for j, agent2 in enumerate(self.active_agents):
+            for i, agent1 in enumerate(self.active_agents+[self.base]):
+                for j, agent2 in enumerate(self.active_agents+[self.base]):
                     if j <= i:
                         continue
                     agent_dist = torch.linalg.vector_norm(

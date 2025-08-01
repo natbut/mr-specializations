@@ -1,4 +1,5 @@
-
+import yaml
+import copy
 
 class HardwareAgent():
 
@@ -9,6 +10,10 @@ class HardwareAgent():
         self.env_lat_min = None
         self.env_lon_max = None
         self.env_lon_min = None
+        self.lat_scale = None
+        self.lat_offset = None
+        self.lon_scale = None
+        self.lon_offset = None
 
         self.my_latlon = [] # Real location in lat/lon
         self.my_location = [] # Location scaled to [-1,1]
@@ -22,23 +27,53 @@ class HardwareAgent():
         self.scaled_max_dist = 2.0
 
 
-    def load_deployment_config(self, config_file):
+    def load_deployment_config(self, config_fp):
         """Load in deployment configuration details from config file."""
 
-        pass
+        with open(config_fp, 'r') as file:
+            params = yaml.safe_load(file)
+
+            self.env_lat_max = params["env_lat_max"]
+            self.env_lat_min = params["env_lat_min"]
+            self.env_lon_max = params["env_lon_max"]
+            self.env_lon_min = params["env_lon_min"]
+
+            mothership_lat = params["mothership_lat"]
+            mothership_lon = params["mothership_lon"]
+
+            tasks_latlon = params["task_locs_latlon"]
+
+        # Set up scaling parameters
+        self.init_env_scaling()
+
+        # Create scaled observations
+        self.scaled_obs["mother_pos"] = self.latlon_to_scaled(mothership_lat, mothership_lon)
+        tasks = {}
+        for i, pos in enumerate(tasks_latlon):
+            tasks[i] = self.latlon_to_scaled(pos[0], pos[1])
+        self.scaled_obs["tasks_pos"] = tasks
+
+        print(f"Init scaled mother_pos:", self.scaled_obs["mother_pos"])
+        print(f"Init scaled tasks_pos:", self.scaled_obs["tasks_pos"])
 
     
-    def update_env_scaling(self,
-                           lat_max: float,
-                           lat_min: float, 
-                           lon_max: float, 
-                           lon_min: float
-                           ):
+    def init_env_scaling(self):
         """Set scaling parameters for converting between sim dims and real"""
-        self.env_lat_max = lat_max
-        self.env_lat_min = lat_min
-        self.env_lon_max = lon_max
-        self.env_lon_min = lon_min
+
+        self.lat_scale = 2.0 / (self.env_lat_max - self.env_lat_min)
+        self.lat_offset = -1.0 - self.env_lat_min * self.lat_scale
+        self.lon_scale = 2.0 / (self.env_lon_max - self.env_lon_min)
+        self.lon_offset = -1.0 - self.env_lon_min * self.lon_scale
+
+    def latlon_to_scaled(self, lat, lon):
+        scaled_y = self.lat_scale * lat + self.lat_offset
+        scaled_x = self.lon_scale * lon + self.lon_offset
+        return [scaled_y, scaled_x]
+
+    def scaled_to_latlon(self, scaled_lat, scaled_lon):
+        lat = (scaled_lat - self.lat_offset) / self.lat_scale
+        lon = (scaled_lon - self.lon_offset) / self.lon_scale
+        return [lat, lon]
 
 
     def prepare_message(self, contents):
@@ -49,7 +84,6 @@ class HardwareAgent():
         """
 
         # TODO
-
 
         pass
 

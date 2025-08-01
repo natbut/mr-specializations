@@ -246,3 +246,4 @@ class VMASPlanningEnv(EnvBase):
     def _set_seed(self, seed: int) -> None:
         """Set random seed for reproducibility."""
         torch.manual_seed(seed)
+        self.sim_env.seed(seed)

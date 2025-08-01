@@ -14,6 +14,25 @@ class Mothership(HardwareAgent):
         self.recieved_obs = {} # Real observations, in lat/lon
         self.scaled_obs = {} # Observations scaled to [-1, 1]
 
+    
+    def load_deployment_config(self, config_fp):
+        super().load_deployment_config(config_fp)
+
+        with open(config_fp, 'r') as file:
+            params = yaml.safe_load(file)
+            num_passengers = params["num_passengers"]
+
+        # Initialize agents pos observations
+        # Initially assume at mothership
+        agents = {}
+        for i in range(num_passengers):
+            agents[i] = copy.deepcopy(self.scaled_obs["mother_pos"])
+        self.scaled_obs["agents_pos"] = agents
+
+        self.my_location = self.scaled_obs["mother_pos"]
+
+        print(f"Init scaled agents_pos:", self.scaled_obs["agents_pos"])
+
 
     def send_spec_params_message(self):
         """
