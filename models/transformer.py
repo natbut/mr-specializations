@@ -166,6 +166,7 @@ class EnvironmentTransformer(nn.Module):
         agent_id_enc=True,
         agent_attn=False,
         variable_team_size=False,
+        no_transformer=False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -177,6 +178,7 @@ class EnvironmentTransformer(nn.Module):
         self.agent_id_enc = agent_id_enc
         self.agent_attn = agent_attn
         self.variable_team_size = variable_team_size
+        self.no_transformer = no_transformer
 
         # Embeddings
         if self.cell_pos_as_features:
@@ -187,25 +189,27 @@ class EnvironmentTransformer(nn.Module):
         # if agent_id_enc:
         self.agent_embed = nn.Embedding(max_robots, d_model)
 
-        # Transformer encoder
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=num_heads,
-            dim_feedforward=d_feedforward,
-            dropout=dropout_rate,
-            batch_first=True
-        )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        if not self.no_transformer: # skip transformer model if true
+            # Transformer encoder
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=num_heads,
+                dim_feedforward=d_feedforward,
+                dropout=dropout_rate,
+                batch_first=True
+            )
+            self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-        # Transformer decoder (self + cross-attention)
-        decoder_layer = nn.TransformerDecoderLayer(
-            d_model=d_model,
-            nhead=num_heads,
-            dim_feedforward=d_feedforward,
-            dropout=dropout_rate,
-            batch_first=True
-        )
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+            # Transformer decoder (self + cross-attention)
+            decoder_layer = nn.TransformerDecoderLayer(
+                d_model=d_model,
+                nhead=num_heads,
+                dim_feedforward=d_feedforward,
+                dropout=dropout_rate,
+                batch_first=True
+            )
+            self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+
 
         if self.agent_attn:
             self.agent_cross_attn = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
@@ -244,9 +248,12 @@ class EnvironmentTransformer(nn.Module):
             x_feat = self.feature_embed(cell_features)
             x_pos = self.pos_embed(cell_positions) # Use the linear embedding for positions
             x = x_feat + x_pos
-
-        # Pass the mask to the encoder
-        enc_out = self.encoder(x, src_key_padding_mask=mask)
+        
+        if not self.no_transformer:
+            # Pass the mask to the encoder
+            enc_out = self.encoder(x, src_key_padding_mask=mask)
+        else:
+            enc_out = x
 
         # === Gather robot tokens ===
         with torch.no_grad():
@@ -288,7 +295,7 @@ class EnvironmentTransformer(nn.Module):
         # print("Masked robot tokens:", robot_tokens[:5])
 
         # === Inject noise ===
-        if self.training and self.noise_std > 0:
+        if self.training and self.noise_std > 0 and not self.no_transformer:
             robot_tokens = robot_tokens + torch.randn_like(robot_tokens) * self.noise_std * robot_mask.unsqueeze(-1)
 
         # print("Noised robot tokens:", robot_tokens[:5])
@@ -319,9 +326,12 @@ class EnvironmentTransformer(nn.Module):
         # print("Added id encoding:", robot_tokens[:5])
 
         # === Decoder ===
-        # The `memory_key_padding_mask` tells the decoder to ignore padded elements in `enc_out` (memory)
-        decoder_out = self.decoder(tgt=robot_tokens, memory=enc_out, memory_key_padding_mask=mask, tgt_key_padding_mask=~robot_mask)
-        decoder_out = decoder_out * robot_mask.unsqueeze(-1)  # Mask before output_head
+        if not self.no_transformer:
+            # The `memory_key_padding_mask` tells the decoder to ignore padded elements in `enc_out` (memory)
+            decoder_out = self.decoder(tgt=robot_tokens, memory=enc_out, memory_key_padding_mask=mask, tgt_key_padding_mask=~robot_mask)
+            decoder_out = decoder_out * robot_mask.unsqueeze(-1)  # Mask before output_head
+        else:
+            decoder_out = robot_tokens
         # print("Decoder out pre-attn:", decoder_out[:5])
         if self.agent_attn:
             cross_agents, _ = self.agent_cross_attn(decoder_out, decoder_out, decoder_out, key_padding_mask=~robot_mask)
