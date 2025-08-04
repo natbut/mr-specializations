@@ -28,7 +28,7 @@ heuristic_fns:
 - goto_base
 
 
-plan_horizon: 0.25
+plan_horizon: 0.5
 sampling_pts: 100
 plan_goal_samp_freq: 3
-plan_step_size: 0.1
+plan_step_size: 0.15
