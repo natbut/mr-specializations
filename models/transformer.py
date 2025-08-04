@@ -167,6 +167,7 @@ class EnvironmentTransformer(nn.Module):
         agent_attn=False,
         variable_team_size=False,
         no_transformer=False,
+        rob_pos_enc = True,
     ):
         super().__init__()
         self.d_model = d_model
@@ -179,6 +180,7 @@ class EnvironmentTransformer(nn.Module):
         self.agent_attn = agent_attn
         self.variable_team_size = variable_team_size
         self.no_transformer = no_transformer
+        self.rob_pos_enc = rob_pos_enc
 
         # Embeddings
         if self.cell_pos_as_features:
@@ -302,9 +304,10 @@ class EnvironmentTransformer(nn.Module):
 
         # === Add positional & agent-ID embeddings ===
         # For padded robots, their positions are meaningless, so mask their embeddings
-        robot_pos_enc = self.pos_embed(robot_pos)  # [B, R, D]
-        robot_pos_enc = robot_pos_enc * robot_mask.unsqueeze(-1)  # Zero out embeddings for padded robots
-        robot_tokens = robot_tokens + robot_pos_enc
+        if self.rob_pos_enc:
+            robot_pos_enc = self.pos_embed(robot_pos)  # [B, R, D]
+            robot_pos_enc = robot_pos_enc * robot_mask.unsqueeze(-1)  # Zero out embeddings for padded robots
+            robot_tokens = robot_tokens + robot_pos_enc
 
         # print("Added position encodings:", robot_tokens[:5])
 
