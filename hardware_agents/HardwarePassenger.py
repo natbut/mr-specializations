@@ -1,10 +1,13 @@
-import torch
 import argparse
-import socket, threading, time
-import sys, os
-import matplotlib.pyplot as plt
-from HardwareAgent import *
+import os
+import socket
+import sys
+import threading
+import time
 
+import matplotlib.pyplot as plt
+import torch
+from HardwareAgent import *
 
 # Add parent directory to sys.path to access heuristics module
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -12,6 +15,7 @@ sys.path.insert(0, parent_dir)
 
 import envs.heuristics
 from agents.planning_agent import compute_traj_rrt_goals
+
 
 def load_func(dotpath : str):
     """ load function in module.  function is right-most segment """
@@ -38,6 +42,8 @@ class Passenger(HardwareAgent):
         self.sampling_pts: 0 # Number of points to sample by planner
         self.plan_goal_samp_freq: 0.0 # Goal point sampling frequency
         self.plan_step_size: 0.0 # Plan step size
+        
+        self.num_plans = 0 # counter for number of plans created
 
 
     def load_deployment_config(self, config_fp):
@@ -164,7 +170,7 @@ class Passenger(HardwareAgent):
                     self.my_specializations = msg[2]
 
 
-    def create_plan(self):
+    def create_plan(self, folder_fp: str):
         """
         Creates short-horizon plan using stored data.
 
@@ -192,7 +198,7 @@ class Passenger(HardwareAgent):
 
         current_pos = torch.tensor([self.my_location])
         heuristic_weights = torch.tensor([self.my_specializations])
-        heuristic_weights[0][0] = 1.0
+        heuristic_weights[0][0] = 1.0 # TODO remove this
 
         print("Nested obs:", obs)
         print("Heuristic weights:", heuristic_weights)
@@ -212,42 +218,56 @@ class Passenger(HardwareAgent):
                                       )
         
         plan = [p.tolist() for p in plan]
-        print(f"Passenger {self.my_id} processed plan: {plan}")
-
-        self._visualize_plan(plan)
-
-        # Save to file
         latlon_plan = [self.scaled_to_latlon(p[0], p[1]) for p in plan]
+        
+        # Save to file & visualize
+        print(f"Passenger {self.my_id} processed plan: {plan}")
         print("Latlon plan:", latlon_plan)
-        save_waypoints_to_file(latlon_plan)
+        plan_name =  "mission_plan_"+str(self.num_plans)+".txt"
+        plan_path = os.path.join(folder_fp, plan_name)
+        os.makedirs(os.path.dirname(plan_path), exist_ok=True)
+        save_waypoints_to_file(latlon_plan, plan_path)
+        self.num_plans += 1
+        
+        self._visualize_plan(latlon_plan)
 
     
     def _visualize_plan(self, plan):
-        """Plot environment tasks, obstacles, agents, and plan waypoints"""
+        """
+        Plot environment tasks, obstacles, agents, and plan waypoints
+        
+        Plan is in scaled [lat (y), lon (x)]
+        """
 
         plt.figure(figsize=(8, 6))
 
         # Plot tasks
         tasks = list(self.scaled_obs["tasks_pos"].values())
+        tasks = [self.scaled_to_latlon(p[0], p[1]) for p in tasks]
         if tasks:
             tasks = torch.tensor(tasks).numpy()
             plt.scatter(tasks[:, 1], tasks[:, 0], c='green', label='Tasks', marker='o')
 
         # Plot obstacles
         obstacles = list(self.scaled_obs["obstacles_pos"].values())
+        obstacles = [self.scaled_to_latlon(p[0], p[1]) for p in obstacles]
         if obstacles:
             obstacles = torch.tensor(obstacles).numpy()
             plt.scatter(obstacles[:, 1], obstacles[:, 0], c='red', label='Obstacles', marker='x')
 
         # Plot agents (others + my_location)
         agents = list(self.scaled_obs["agents_pos"].values())
-        agents.append(self.my_location)
+        agents = [self.scaled_to_latlon(p[0], p[1]) for p in agents]
+        agents.append(self.scaled_to_latlon(self.my_location[0], 
+                                            self.my_location[1]
+                                            )
+                      )
         if agents:
             agents = torch.tensor(agents).numpy()
             plt.scatter(agents[:, 1], agents[:, 0], c='blue', label='Agents', marker='^')
 
         # Plot base/mothership
-        mother = torch.tensor(self.scaled_obs["mother_pos"]).numpy()
+        mother = torch.tensor(self.scaled_to_latlon(self.scaled_obs["mother_pos"][0], self.scaled_obs["mother_pos"][1])).numpy()
         plt.scatter(mother[1], mother[0], c='purple', label='Base', marker='s')
 
         # Plot plan waypoints
@@ -260,7 +280,7 @@ class Passenger(HardwareAgent):
         plt.ylabel('Y')
         plt.title(f'Passenger {self.my_id} Plan Visualization')
         plt.legend()
-        plt.gca().invert_yaxis()
+        # plt.gca().invert_yaxis()
         plt.grid(True)
         plt.show()
 
@@ -283,16 +303,15 @@ class Passenger(HardwareAgent):
 
         pass
 
-    def update_location(self):
+    def update_location(self, scaled_loc=None):
         """Update own current position"""
 
         # TODO set this up to use latlon from MAVLink
-        if len(self.my_location) == 0:
-            self.my_location = copy.deepcopy(self.scaled_obs["mother_pos"])
+        if scaled_loc:
+            self.my_location = scaled_loc
         else:
-            self.my_location = [l + 0.001 for l in self.my_location]
-            print("Updated location to:", self.my_location)
-
+            self.my_location = copy.deepcopy(self.scaled_obs["mother_pos"])
+            
 
 
 def save_waypoints_to_file(waypoints, filename="mission_plan.txt"):
@@ -319,7 +338,7 @@ def save_waypoints_to_file(waypoints, filename="mission_plan.txt"):
             # - PARAM2, PARAM3, PARAM4: 0 (Typically 0 for these params in a standard waypoint)
             # - AUTOCONTINUE: 1 (Auto-continue flag)
             # For this example, we're using the latitude, longitude, and a fixed altitude of 550 meters
-            file.write(f"{idx}\t1\t0\t16\t0.15\t0\t0\t0\t{lon:.10f}\t{lat:.10f}\t550\t1\n")
+            file.write(f"{idx}\t1\t0\t16\t0.15\t0\t0\t0\t{lat:.10f}\t{lon:.10f}\t550\t1\n")
 
     print(f"Mission plan saved to {filename}")
 
@@ -347,16 +366,17 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Run simulated hardware agents")
     parser.add_argument("--config_fp", type=str, required=True, help="Path to problem config file")
+    parser.add_argument("--logs_fp", type=str, required=True, help="Path to logs folder")
     parser.add_argument("--robot_id", type=int, default=0, help="Passenger ID")
 
     args = parser.parse_args()
 
     # Create agent
     passenger = Passenger(args.robot_id)
-    passenger.load_deployment_config(args.config_fp) 
+    passenger.load_deployment_config(args.config_fp)
     passenger.update_location()
 
-    # Comms initialization (as neeeded)
+    # Comms initialization (as needed)
     # TODO
 
     # Planning initialization
@@ -372,14 +392,15 @@ if __name__ == "__main__":
 
         # Process any recieved messages
         # TODO: Check for new message files, update passenger properties (including specializations)
-        passenger.update_location()
+        location = [l + 0.002 for l in passenger.my_location]
+        passenger.update_location(location)
 
 
         # Process planning commands
         if planning_trigger:
             print("Planning triggered")
             planning_trigger = False
-            passenger.create_plan() # create and save new plan
+            passenger.create_plan(folder_fp=args.logs_fp) # create and save new plan
         else:
             print("Planning socket waiting...")
 
