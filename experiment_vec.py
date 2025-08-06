@@ -535,13 +535,13 @@ def train_PPO(scenario,
         run.finish()    
 
 
-def create_env(scenario, device, env_config, scenario_config) -> TransformedEnv:
+def create_env(scenario, device, env_config, scenario_config, check_specs=True,) -> TransformedEnv:
     base_env = VMASPlanningEnv(scenario,
                                 device=device,
                                 env_kwargs=env_config,
                                 scenario_kwargs=scenario_config,
                                 )
-
+    print("Created base env.")
     env = TransformedEnv(
         base_env,
         Compose(
@@ -553,15 +553,17 @@ def create_env(scenario, device, env_config, scenario_config) -> TransformedEnv:
         ),
         device=device,
     )
+    print("Created transformed env.")
 
     # Initialize observation norm stats
     # for t in env.transform:
     #     if isinstance(t, ObservationNorm):
     #         print("Normalizing obs", t.in_keys)
     #         t.init_stats(num_iter=10*num_envs, reduce_dim=[0,1], cat_dim=0) # num_iter should be divisible (?) or match (?) horizon in env
-
-    check_env_specs(env)
-
+    if check_specs:
+        print("Checking env specs...")
+        check_env_specs(env)
+        print("Checks complete, returning env.")
     return env
 
 def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, agent_id_enc, no_transformer, rob_pos_enc, device):
@@ -594,6 +596,8 @@ def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agen
         return_log_prob=True,
         # NOTE we need the log-prob for the numerator of the importance weights
     )
+
+    policy_module.forward()
 
     return tf_act, policy_module
 
