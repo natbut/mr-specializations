@@ -166,7 +166,8 @@ class EnvironmentTransformer(nn.Module):
         agent_id_enc=True,
         agent_attn=False,
         variable_team_size=False,
-        no_transformer=False,
+        use_encoder=True,
+        use_decoder=True,
         rob_pos_enc = True,
     ):
         super().__init__()
@@ -179,7 +180,8 @@ class EnvironmentTransformer(nn.Module):
         self.agent_id_enc = agent_id_enc
         self.agent_attn = agent_attn
         self.variable_team_size = variable_team_size
-        self.no_transformer = no_transformer
+        self.use_encoder = use_encoder,
+        self.use_decoder = use_decoder,
         self.rob_pos_enc = rob_pos_enc
 
         # Embeddings
@@ -191,7 +193,7 @@ class EnvironmentTransformer(nn.Module):
         # if agent_id_enc:
         self.agent_embed = nn.Embedding(max_robots, d_model)
 
-        if not self.no_transformer: # skip transformer model if true
+        if self.use_encoder:
             # Transformer encoder
             encoder_layer = nn.TransformerEncoderLayer(
                 d_model=d_model,
@@ -201,7 +203,7 @@ class EnvironmentTransformer(nn.Module):
                 batch_first=True
             )
             self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-
+        if self.use_decoder:
             # Transformer decoder (self + cross-attention)
             decoder_layer = nn.TransformerDecoderLayer(
                 d_model=d_model,
@@ -251,7 +253,7 @@ class EnvironmentTransformer(nn.Module):
             x_pos = self.pos_embed(cell_positions) # Use the linear embedding for positions
             x = x_feat + x_pos
         
-        if not self.no_transformer:
+        if self.use_encoder:
             # Pass the mask to the encoder
             enc_out = self.encoder(x, src_key_padding_mask=mask)
         else:
@@ -329,7 +331,7 @@ class EnvironmentTransformer(nn.Module):
         # print("Added id encoding:", robot_tokens[:5])
 
         # === Decoder ===
-        if not self.no_transformer:
+        if self.use_decoder:
             # The `memory_key_padding_mask` tells the decoder to ignore padded elements in `enc_out` (memory)
             decoder_out = self.decoder(tgt=robot_tokens, memory=enc_out, memory_key_padding_mask=mask, tgt_key_padding_mask=~robot_mask)
             decoder_out = decoder_out * robot_mask.unsqueeze(-1)  # Mask before output_head

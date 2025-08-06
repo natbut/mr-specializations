@@ -250,7 +250,8 @@ def eval(scenario, scenario_configs, env_configs, model_configs, checkpt_fp, sav
     agent_attn=model_config["agent_attn"]
     cell_pos_as_features=model_config["cell_pos_as_features"]
     agent_id_enc = model_config.get("agent_id_enc", True)
-    no_transformer = model_config.get("no_transformer", False)
+    use_encoder = model_config.get("use_encoder", True)
+    use_decoder = model_config.get("use_decoder", True)
     rob_pos_enc = model_config.get("rob_pos_enc", True)
     tf_act, policy_module = create_actor(env,
                                          num_features,
@@ -260,7 +261,8 @@ def eval(scenario, scenario_configs, env_configs, model_configs, checkpt_fp, sav
                                          agent_attn, 
                                          cell_pos_as_features, 
                                          agent_id_enc, 
-                                         no_transformer,
+                                         use_encoder,
+                                         use_decoder,
                                          rob_pos_enc,
                                          device
                                          )
@@ -325,7 +327,8 @@ def train_PPO(scenario,
     agent_attn=model_config["agent_attn"]
     cell_pos_as_features=model_config["cell_pos_as_features"]
     agent_id_enc = model_config["agent_id_enc"]
-    no_transformer = model_config.get("no_transformer", False)
+    use_encoder = model_config.get("use_encoder", True)
+    use_decoder = model_config.get("use_decoder", True)
     rob_pos_enc = model_config.get("rob_pos_enc", True)
     tf_act, policy_module = create_actor(env,
                                          num_features,
@@ -335,7 +338,8 @@ def train_PPO(scenario,
                                          agent_attn, 
                                          cell_pos_as_features, 
                                          agent_id_enc, 
-                                         no_transformer,
+                                         use_encoder,
+                                         use_decoder,
                                          rob_pos_enc,
                                          device
                                          )
@@ -566,7 +570,19 @@ def create_env(scenario, device, env_config, scenario_config, check_specs=True,)
         print("Checks complete, returning env.")
     return env
 
-def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, agent_id_enc, no_transformer, rob_pos_enc, device):
+def create_actor(env, 
+                 num_features, 
+                 num_heuristics, 
+                 d_feedforward, 
+                 d_model, 
+                 agent_attn, 
+                 cell_pos_as_features, 
+                 agent_id_enc, 
+                 use_encoder, 
+                 use_decoder,
+                 rob_pos_enc, 
+                 device
+                 ):
     tf_act = EnvironmentTransformer(num_features=num_features,
                                         num_heuristics=num_heuristics,
                                         d_feedforward=d_feedforward,
@@ -574,7 +590,8 @@ def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agen
                                         agent_attn=agent_attn,
                                         cell_pos_as_features=cell_pos_as_features,
                                         agent_id_enc=agent_id_enc,
-                                        no_transformer=no_transformer,
+                                        use_encoder=use_encoder,
+                                        use_decoder=use_decoder,
                                         rob_pos_enc=rob_pos_enc
                                         ).to(device)
 
@@ -596,8 +613,6 @@ def create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agen
         return_log_prob=True,
         # NOTE we need the log-prob for the numerator of the importance weights
     )
-
-    policy_module.forward()
 
     return tf_act, policy_module
 
