@@ -1,9 +1,7 @@
 import argparse
-import os
-import socket
-import sys
-import threading
-import time
+import sys, os
+import socket, threading, time
+import copy
 
 import matplotlib.pyplot as plt
 import torch
@@ -69,7 +67,7 @@ class Passenger(HardwareAgent):
             
             num_passengers = params["num_passengers"]
 
-        # Initialize other agents and obstacles pos observations
+        # Initialize other agents' and obstacles pos observations
         # Initially assume at mothership
         agents = {}
         for i in range(num_passengers-1): # only store positions for other agents

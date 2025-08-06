@@ -32,3 +32,8 @@ plan_horizon: 0.5
 sampling_pts: 100
 plan_goal_samp_freq: 3
 plan_step_size: 0.15
+
+model_conf_fp: "conf\\models\\mat_2_3_2.yaml"
+model_weights_fp: "conf\\models\\best_2_3_2.pt"
+scenario_conf_fp: "..\\conf\\scenarios\\comms_5.yaml"
+env_conf_fp:  "..\\conf\\envs\\planning_env_explore_5.yaml"

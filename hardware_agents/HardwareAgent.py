@@ -1,5 +1,4 @@
 import yaml
-import copy
 
 class HardwareAgent():
 
