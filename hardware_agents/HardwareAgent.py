@@ -78,6 +78,11 @@ class HardwareAgent():
         self.msg_tx_done_fp = self.messaging_fp+f"agent_{self.my_id}_tx_done"
         self.msg_rx_done_fp = self.messaging_fp+f"agent_{self.my_id}_rx_done"
         
+        os.makedirs(self.msg_tx_fp, exist_ok=True)
+        os.makedirs(self.msg_rx_fp, exist_ok=True)
+        os.makedirs(self.msg_tx_done_fp, exist_ok=True)
+        os.makedirs(self.msg_rx_done_fp, exist_ok=True)
+        
         # Logging folder path
         self.logs_fp=logs_fp+"_"+str(self.my_id)
 
@@ -117,7 +122,6 @@ class HardwareAgent():
         print("Prepared message text:", text)
         
         # Write to file
-        os.makedirs(self.msg_tx_fp, exist_ok=True)
         msg_fp = os.path.join(self.msg_tx_fp, f"msg_{self.tx_ct}.txt")
         self.tx_ct += 1
         with open(msg_fp, "w") as file:
@@ -126,16 +130,33 @@ class HardwareAgent():
         print("Message saved at", msg_fp)
 
 
-    def receive_message(self):
+    def receive_messages(self):
         """
         Process messages in received messages (rx) folder.
         """
-
-        # TODO
-
-        self.process_universal_messages()
+        if not os.path.exists(self.msg_rx_fp) or not os.listdir(self.msg_rx_fp):
+            print("No messages received yet.")
+            return
         
-    
+        # For each message in self.msg_rx_fp
+        fps = []
+        for msg_fp in os.listdir(self.msg_rx_fp):
+            with open(os.path.join(self.msg_rx_fp, msg_fp), "r") as file:
+                msg = file.read().strip().split("|")
+                # Skip messages not meant for this agent
+                if int(msg[1]) == self.my_id:
+                    
+                    print("Processing message", msg)
+                    self.process_messages(msg[0],msg[-1])
+            fps.append(msg_fp)
+            
+        for msg_fp in fps:
+            # Move processed message to done folder
+            done_fp = os.path.join(self.msg_rx_done_fp, msg_fp)
+            os.rename(os.path.join(self.msg_rx_fp, msg_fp), done_fp)
+        print("Messages processed, moved to done folder")
+
+
     def dummy_send_message(self, message):
         """
         Saves message to receiving agent's rx file location.
@@ -143,19 +164,42 @@ class HardwareAgent():
         pass
 
     
-    def process_universal_messages(self):
+    def process_messages(self, msg_type, msg):
         """Handle messages that apply both to Passengers and Mothership"""
 
-        for i, msg in enumerate(self.received_message_buffer):
-            if "agent_pos" == msg[0]: # Agent position updates
-                self.received_message_buffer.pop(i)
-                # msg = (msg_type, agent_id, agent_pos) MESSAGE FORMAT
-                # scaled_obs[agents_pos] = {agent_id: agent_pos} STORED OBS FORMAT
-                self.scaled_obs["agents_pos"][msg[1]] = msg[2]
-            if "completed_task" == msg[0]:
-                self.received_message_buffer.pop(i)
-                # msg = (msg_type, task_id)
-                if self.scaled_obs["tasks_pos"][msg[1]]:
-                    self.scaled_obs["tasks_pos"].pop(msg[1])
+        if "agent_pos" == msg_type: # Agent position updates
+            # msg = (msg_type} {agent_id, agent_pos) MESSAGE FORMAT
+            # scaled_obs[agents_pos] = {agent_id: agent_pos} STORED OBS FORMAT
+            self.scaled_obs["agents_pos"][msg[0]] = msg[1]
+        elif "completed_task" == msg_type:
+            # msg = (msg_type, task_id)
+            if self.scaled_obs["tasks_pos"][msg[0]]:
+                self.scaled_obs["tasks_pos"].pop(msg[0])
+        elif "new_task" == msg_type:
+                # msg = (msg_type, task_id, task_pos) MESSAGE FORMAT
+                # scaled_obs[tasks_pos] = {task_id: task_pos} STORED OBS FORMAT
+                self.scaled_obs["tasks_pos"][msg[0]] = msg[1]
+        elif "spec_params" == msg_type:
+            # msg = (msg_type, agent_id, spec_params)
+            if self.my_id == msg[0]:
+                self.my_specializations = msg[1]
+        elif "obs_vec" == msg_type:
+                # msg = (msg_type, obs_vec)
+                obs_vec = msg[1]
+                self._update_env_cell(obs_vec)
+                
+                
+    def _update_env_cell(self, obs_vec):
+        """
+        Creates or updates environment cell with observation vector information.
+        
+        Selects environment cell nearest to feature location
+        """
+
+        # TODO cell key should be nearest discretized position to pos in obs_vec (last 2 elements)
+        
+        # TODO cell value should be features in obs_vec
+
+        pass
                 
 
