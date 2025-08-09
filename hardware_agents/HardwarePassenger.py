@@ -1,7 +1,11 @@
 import argparse
-import sys, os
-import socket, threading, time
 import copy
+import os
+import socket
+import struct
+import sys
+import threading
+import time
 
 import matplotlib.pyplot as plt
 import torch
@@ -24,14 +28,13 @@ def load_func(dotpath : str):
 
 
 class Passenger(HardwareAgent):
+    
+    TASK_COMP_RANGE = 0.1 # scaled dims
 
     def __init__(self, id):
         """Planning & comms coordination agent for Passenger robots."""
 
-        super().__init__()
-        
-        
-        self.my_id = id
+        super().__init__(id)
 
         self.my_specializations = [] # Specialization parameters from Mothership
         self.heuristic_fns = [] # Functions used to evaluate plan heuristics
@@ -124,16 +127,13 @@ class Passenger(HardwareAgent):
     def send_location_obs_message(self):
         """
         Send out my location (scaled)
-        
-        Store in file format to be sent out by acoustic modems.
         """
-
-        locs = self.my_location
-
-        # TODO configure message (.txt file)
-        msg = None # contain (msg_type, agent_id, agent_pos)
-
-        self.prepare_message(msg)
+        loc = (self.my_id, self.my_location)
+        
+        for a_id in range(1, self.num_passengers+1):
+            if a_id != self.my_id:
+                self.prepare_message("agent_pos", a_id, loc)
+        self.prepare_message("agent_pos", 0, loc)
 
 
     def send_completed_task_message(self):
@@ -143,13 +143,22 @@ class Passenger(HardwareAgent):
         Store in file format to be sent out by acoustic modems.
         """
 
-        # TODO: Process "task completion"
-        
-        # TODO configure message (.txt file)
-
-        msg = None # contaion (msg_type, task_id)
-
-        self.prepare_message(msg)
+        # Process "task completion" & get task_id
+        completed = []
+        for t_id in self.scaled_obs["tasks_pos"]:
+            t_pos = self.scaled_obs["tasks_pos"][t_id]
+            # If agent has reached task, mark task complete & sent messages
+            diff = [[t_pos[0]-self.my_location[0]], 
+            [t_pos[1]-self.my_location[1]]]
+            if torch.norm(torch.tensor(diff)) < self.TASK_COMP_RANGE:
+                for a_id in range(1, self.num_passengers+1):
+                    if a_id != self.my_id:
+                        self.prepare_message("completed_task", a_id, t_id)
+                self.prepare_message("completed_task", 0, t_id)
+                completed.append(t_id)
+                
+        for t_id in completed:
+            self.scaled_obs["tasks_pos"].pop(t_id) # remove from own obs
 
 
     def receive_message(self, message):
@@ -168,7 +177,7 @@ class Passenger(HardwareAgent):
                     self.my_specializations = msg[2]
 
 
-    def create_plan(self, folder_fp: str):
+    def create_plan(self):
         """
         Creates short-horizon plan using stored data.
 
@@ -222,7 +231,7 @@ class Passenger(HardwareAgent):
         print(f"Passenger {self.my_id} processed plan: {plan}")
         print("Latlon plan:", latlon_plan)
         plan_name =  "mission_plan_"+str(self.num_plans)+".txt"
-        plan_path = os.path.join(folder_fp, plan_name)
+        plan_path = os.path.join(self.logs_fp, plan_name)
         os.makedirs(os.path.dirname(plan_path), exist_ok=True)
         save_waypoints_to_file(latlon_plan, plan_path)
         self.num_plans += 1
@@ -294,21 +303,10 @@ class Passenger(HardwareAgent):
             return torch.clamp(1.0 - (min_dist/self.scaled_max_dist), min=0.0, max=self.scaled_max_dist)
         
 
-    def _get_latlon(self):
-        """Get position feature from MAVLink"""
-
-        # TODO set up this feature
-
-        pass
-
-    def update_location(self, scaled_loc=None):
-        """Update own current position"""
-
-        # TODO set this up to use latlon from MAVLink
-        if scaled_loc:
-            self.my_location = scaled_loc
-        else:
-            self.my_location = copy.deepcopy(self.scaled_obs["mother_pos"])
+    def update_location(self, lat=None, lon=None):
+        """Update own current position from lat lon"""
+        
+        self.my_location = self.latlon_to_scaled(lat, lon)
             
 
 
@@ -342,7 +340,7 @@ def save_waypoints_to_file(waypoints, filename="mission_plan.txt"):
 
 
 
-def listener():
+def planning_listener():
     global planning_trigger
     s = socket.socket()
     s.bind(('localhost', 9999))
@@ -352,6 +350,19 @@ def listener():
         planning_trigger = True
         conn.close()
 
+def update_listener():
+    global update_trigger
+    global passenger_latlon
+    s = socket.socket()
+    s.bind(('localhost', 9998))
+    s.listen(1)
+    while True:
+        conn, _ = s.accept()
+        update_trigger = True
+        data = conn.recv(1024)
+        passenger_latlon = struct.unpack(f'<{2}f', data)
+        print("UPDATE RECV:", passenger_latlon)
+        conn.close()
 
 if __name__ == "__main__":
     """
@@ -361,44 +372,48 @@ if __name__ == "__main__":
     """
 
     planning_trigger = False
+    update_trigger = False
+    passenger_latlon = ()
 
     parser = argparse.ArgumentParser(description="Run simulated hardware agents")
     parser.add_argument("--config_fp", type=str, required=True, help="Path to problem config file")
-    parser.add_argument("--logs_fp", type=str, required=True, help="Path to logs folder")
-    parser.add_argument("--robot_id", type=int, default=0, help="Passenger ID")
+    parser.add_argument("--robot_id", type=int, default=1, help="Passenger ID")
 
     args = parser.parse_args()
 
     # Create agent
     passenger = Passenger(args.robot_id)
     passenger.load_deployment_config(args.config_fp)
-    passenger.update_location()
 
-    # Comms initialization (as needed)
-    # TODO
-
-    # Planning initialization
-    threading.Thread(target=listener, daemon=True).start()
+    # Trigger initialization
+    threading.Thread(target=planning_listener, daemon=True).start()
+    threading.Thread(target=update_listener, daemon=True).start()
 
     # Action loop
     while True:
 
         # Prepare new messages to send (periodically)
-        passenger.send_location_obs_message() # TODO get & send location
-        passenger.send_completed_task_message() # TODO check completed tasks, send updates
-        # passenger.send_cell_obs_message() # TODO obs_vec (maybe only when triggered)
+        if update_trigger:
+            print("Updating triggered")
+            update_trigger = False
+            if len(passenger_latlon) > 0:
+                passenger.update_location(passenger_latlon[0], passenger_latlon[1])
+                passenger_latlon = ()
+            passenger.send_location_obs_message()
+            passenger.send_completed_task_message()
+            passenger.send_cell_obs_message() # TODO obs_vec (maybe only when triggered)
+        else:
+            print("Update socket waiting...")
 
         # Process any recieved messages
         # TODO: Check for new message files, update passenger properties (including specializations)
-        location = [l + 0.002 for l in passenger.my_location]
-        passenger.update_location(location)
 
 
         # Process planning commands
         if planning_trigger:
             print("Planning triggered")
             planning_trigger = False
-            passenger.create_plan(folder_fp=args.logs_fp) # create and save new plan
+            passenger.create_plan() # create and save new plan
         else:
             print("Planning socket waiting...")
 
