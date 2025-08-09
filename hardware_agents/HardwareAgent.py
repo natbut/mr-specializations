@@ -1,8 +1,13 @@
+import os
+
 import yaml
+
 
 class HardwareAgent():
 
-    def __init__(self):
+    def __init__(self, id):
+        
+        self.my_id = id
         
         # Scaling parameters for converting from [-1,1] sim env scale to real coordinates
         self.env_lat_max = None
@@ -17,13 +22,21 @@ class HardwareAgent():
         self.my_latlon = [] # Real location in lat/lon
         self.my_location = [] # Location scaled to [-1,1]
         
+        self.num_passengers = 0
+        
         self.scaled_obs = {} # Observations scaled to [-1, 1]
-
-        self.message_buffer = []
-        self.received_message_buffer = []
 
         self.discrete_resolution = 0
         self.scaled_max_dist = 2.0
+        
+        # Filepaths to message tx/rx locations
+        self.messaging_fp = ""
+        self.msg_tx_fp = "" # outgoing message buffer
+        self.msg_rx_fp = "" # incoming message buffer
+        self.msg_tx_done_fp = "" # completed sent message storage
+        self.msg_rx_done_fp = "" # completed received message storage
+        self.tx_ct = 0
+        self.rx_ct = 0
 
 
     def load_deployment_config(self, config_fp):
@@ -36,6 +49,10 @@ class HardwareAgent():
             self.env_lat_min = params["env_lat_min"]
             self.env_lon_max = params["env_lon_max"]
             self.env_lon_min = params["env_lon_min"]
+            
+            self.num_passengers = params["num_passengers"]
+            self.messaging_fp = params["messaging_fp"]
+            logs_fp = params["logs_fp"]
 
             mothership_lat = params["mothership_lat"]
             mothership_lon = params["mothership_lon"]
@@ -54,6 +71,15 @@ class HardwareAgent():
 
         print(f"Init scaled mother_pos:", self.scaled_obs["mother_pos"])
         print(f"Init scaled tasks_pos:", self.scaled_obs["tasks_pos"])
+        
+        # Prepare messaging paths
+        self.msg_tx_fp = self.messaging_fp+f"agent_{self.my_id}_tx"
+        self.msg_rx_fp = self.messaging_fp+f"agent_{self.my_id}_rx"
+        self.msg_tx_done_fp = self.messaging_fp+f"agent_{self.my_id}_tx_done"
+        self.msg_rx_done_fp = self.messaging_fp+f"agent_{self.my_id}_rx_done"
+        
+        # Logging folder path
+        self.logs_fp=logs_fp+"_"+str(self.my_id)
 
     
     def init_env_scaling(self):
@@ -65,8 +91,8 @@ class HardwareAgent():
         self.lon_offset = -1.0 - self.env_lon_min * self.lon_scale
 
     def latlon_to_scaled(self, lat, lon):
-        scaled_y = self.lat_scale * lat + self.lat_offset
-        scaled_x = self.lon_scale * lon + self.lon_offset
+        scaled_y = round(self.lat_scale * lat + self.lat_offset, 4)
+        scaled_x = round(self.lon_scale * lon + self.lon_offset, 4)
         return [scaled_y, scaled_x]
 
     def scaled_to_latlon(self, scaled_lat, scaled_lon):
@@ -75,28 +101,46 @@ class HardwareAgent():
         return [lat, lon]
 
 
-    def prepare_message(self, contents):
+    def prepare_message(self, msg_type, target_id, contents):
         """
         Prepare contents to be transmitted by comms modems.
 
-        Store in file format to be sent out by acoustic modems.
+        Store in txt file format & in tx folder to be sent out by acoustic modems.
+        
+        Args:
+            - msg_type (str): agent_pos, completed_task, spec_params, task_pos,
+            - target_id (int): id of target entity
+            - contents: (dict_id, content)            
         """
+        # Create write contents
+        text = msg_type+"|"+str(target_id)+"|"+str(contents)
+        print("Prepared message text:", text)
+        
+        # Write to file
+        os.makedirs(self.msg_tx_fp, exist_ok=True)
+        msg_fp = os.path.join(self.msg_tx_fp, f"msg_{self.tx_ct}.txt")
+        self.tx_ct += 1
+        with open(msg_fp, "w") as file:
+            file.write(text)
+        
+        print("Message saved at", msg_fp)
 
-        # TODO
 
-        pass
-
-
-    def receive_message(self, message):
+    def receive_message(self):
         """
-        Process message received from comms modem.
-
-        Adds message contents to received_message_buffer.
+        Process messages in received messages (rx) folder.
         """
 
         # TODO
 
         self.process_universal_messages()
+        
+    
+    def dummy_send_message(self, message):
+        """
+        Saves message to receiving agent's rx file location.
+        """
+        pass
 
     
     def process_universal_messages(self):
