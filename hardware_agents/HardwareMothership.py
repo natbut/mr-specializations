@@ -77,14 +77,14 @@ class Mothership(HardwareAgent):
         """
         Use model to find specialization parameters for agents.
         """
-        joint_specs = self._query_model()
+        joint_specs = self._query_policy()
 
         # Parse policy output to get per-passenger params
         for a_id, params in enumerate(joint_specs):
             self.prepare_message("spec_params", a_id, (a_id, params))
             
 
-    def _query_model(self):
+    def _query_policy(self):
         """
         Perform forward pass of policy model to get agents specialization params.
         
@@ -208,32 +208,6 @@ class Mothership(HardwareAgent):
 
         pass
 
-
-    def receive_message(self, message):
-        """Handle Mothership-specific messages."""
-        super().receive_message(message)
-
-        for i, msg in enumerate(self.received_message_buffer):
-            self.received_message_buffer.pop(i)
-
-            if "obs_vec" == msg[0]:
-                # msg = (msg_type, obs_vec)
-                obs_vec = msg[1]
-                self._update_env_cell(obs_vec)
-
-
-    def _update_env_cell(self, obs_vec):
-        """
-        Creates or updates environment cell with observation vector information.
-        
-        Selects environment cell nearest to feature location
-        """
-
-        # TODO cell key should be nearest discretized position to pos in obs_vec
-        
-        # TODO cell value should be features in obs_vec
-
-        pass
 
 
 

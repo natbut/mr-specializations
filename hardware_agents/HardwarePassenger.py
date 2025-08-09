@@ -100,6 +100,8 @@ class Passenger(HardwareAgent):
 
         Store in file format to be sent out by acoustic modems.
         """
+        
+        return # TODO remove
 
         # Compute feature values
         task_obs = self._get_dist_feature_value(self.scaled_obs["tasks_pos"])
@@ -161,21 +163,6 @@ class Passenger(HardwareAgent):
             self.scaled_obs["tasks_pos"].pop(t_id) # remove from own obs
 
 
-    def receive_message(self, message):
-        """Handle Passenger-specific messages."""
-        super().receive_message(message)
-
-        for i, msg in enumerate(self.received_message_buffer):
-            self.received_message_buffer.pop(i)
-            if "new_task" == msg[0]:
-                # msg = (msg_type, task_id, task_pos) MESSAGE FORMAT
-                # scaled_obs[tasks_pos] = {task_id: task_pos} STORED OBS FORMAT
-                self.scaled_obs["tasks_pos"][msg[1]] = msg[2]
-            if "spec_params" == msg[0]:
-                # msg = (msg_type, agent_id, spec_params)
-                if self.my_id == msg[1]:
-                    self.my_specializations = msg[2]
-
 
     def create_plan(self):
         """
@@ -197,7 +184,6 @@ class Passenger(HardwareAgent):
         for o in self.scaled_obs["obstacles_pos"]:
             obstacles.append(self.scaled_obs["obstacles_pos"][o])
 
-        
         obs["obs_tasks"] = torch.tensor([tasks])
         obs["obs_agents"] = torch.tensor([agents])
         obs["obs_obstacles"] = torch.tensor([obstacles])
@@ -339,22 +325,29 @@ def save_waypoints_to_file(waypoints, filename="mission_plan.txt"):
     print(f"Mission plan saved to {filename}")
 
 
+base_ports = {
+        "plan": 10000,
+        "update": 11000,
+        "coordinate": 12000
+    }
 
-def planning_listener():
+def planning_listener(robot_id):
     global planning_trigger
     s = socket.socket()
-    s.bind(('localhost', 9999))
+    print("Starting planning listener on port:",  base_ports["plan"]+robot_id)
+    s.bind(('localhost', base_ports["plan"]+robot_id))
     s.listen(1)
     while True:
         conn, _ = s.accept()
         planning_trigger = True
         conn.close()
 
-def update_listener():
+def update_listener(robot_id):
     global update_trigger
     global passenger_latlon
     s = socket.socket()
-    s.bind(('localhost', 9998))
+    print("Starting update listener on port:",  base_ports["update"]+robot_id)
+    s.bind(('localhost', base_ports["update"]+robot_id))
     s.listen(1)
     while True:
         conn, _ = s.accept()
@@ -386,8 +379,12 @@ if __name__ == "__main__":
     passenger.load_deployment_config(args.config_fp)
 
     # Trigger initialization
-    threading.Thread(target=planning_listener, daemon=True).start()
-    threading.Thread(target=update_listener, daemon=True).start()
+    threading.Thread(target=planning_listener, 
+                     args=(args.robot_id,), 
+                     daemon=True).start()
+    threading.Thread(target=update_listener, 
+                     args=(args.robot_id,), 
+                     daemon=True).start()
 
     # Action loop
     while True:
@@ -406,8 +403,7 @@ if __name__ == "__main__":
             print("Update socket waiting...")
 
         # Process any recieved messages
-        # TODO: Check for new message files, update passenger properties (including specializations)
-
+        passenger.receive_messages()
 
         # Process planning commands
         if planning_trigger:
