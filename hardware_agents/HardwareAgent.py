@@ -153,6 +153,8 @@ class HardwareAgent():
         for msg_fp in fps:
             # Move processed message to done folder
             done_fp = os.path.join(self.msg_rx_done_fp, msg_fp)
+            if os.path.exists(done_fp):
+                os.remove(done_fp)
             os.rename(os.path.join(self.msg_rx_fp, msg_fp), done_fp)
         print("Messages processed, moved to done folder")
 
@@ -177,10 +179,11 @@ class HardwareAgent():
             fps.append(msg_fp)
         
         for msg_fp in fps:
-            # Move sent message to done folder
+            # Move sent message to done folder, overwrite if exists
             done_fp = os.path.join(self.msg_tx_done_fp, msg_fp)
+            if os.path.exists(done_fp):
+                os.remove(done_fp)
             os.rename(os.path.join(self.msg_tx_fp, msg_fp), done_fp)
-        print("Messages sent, moved to done folder")
         
 
     

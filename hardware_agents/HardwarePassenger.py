@@ -29,7 +29,7 @@ def load_func(dotpath : str):
 
 class Passenger(HardwareAgent):
     
-    TASK_COMP_RANGE = 0.1 # scaled dims
+    TASK_COMP_RANGE = 0.075 # scaled dims
 
     def __init__(self, id):
         """Planning & comms coordination agent for Passenger robots."""
@@ -101,13 +101,16 @@ class Passenger(HardwareAgent):
         Store in file format to be sent out by acoustic modems.
         """
         
-        return # TODO remove
+        # Convert obs to tensors
+        tasks_tensor = torch.tensor(list(self.scaled_obs["tasks_pos"].values()))
+        obsts_tensor = torch.tensor(list(self.scaled_obs["obstacles_pos"].values()))
+        agents_tensor = torch.tensor(list(self.scaled_obs["agents_pos"].values()))
 
         # Compute feature values
-        task_obs = self._get_dist_feature_value(self.scaled_obs["tasks_pos"])
-        obst_obs = self._get_dist_feature_value(self.scaled_obs["obsts_pos"])
-        agent_obs = self._get_dist_feature_value(self.scaled_obs["agents_pos"])
-        mother_obs = self._get_dist_feature_value(self.scaled_obs["mother_pos"])
+        task_obs = self._get_dist_feature_value(tasks_tensor)
+        obst_obs = self._get_dist_feature_value(obsts_tensor)
+        agent_obs = self._get_dist_feature_value(agents_tensor)
+        mother_obs = self._get_dist_feature_value(torch.tensor(self.scaled_obs["mother_pos"]))
         exploration_obs = 1.0 # assumes all cells are explored
         frontiers_obs = 0.0 # assumes all cells are explored
 
@@ -117,13 +120,13 @@ class Passenger(HardwareAgent):
                    frontiers_obs,
                    exploration_obs,
                    mother_obs,
-                   self.my_location
+                   self.my_location[0],
+                   self.my_location[1]
                    ]
         
-        # TODO configure message (.txt file)
-        msg = None # contain (msg_type, obs_vec)
-
-        self.prepare_message(msg)
+        print("Cell obs vector:", obs_vec)
+        
+        self.prepare_message("obs_vec", 0, obs_vec)
 
 
     def send_location_obs_message(self):
@@ -281,13 +284,17 @@ class Passenger(HardwareAgent):
 
     def _get_dist_feature_value(self, feature):
         """ Compute distance feature value. Is 1.0 if feature is in same cell as agent. """
-        dists = torch.norm(self.my_location - feature, dim=-1)
+        
+        my_loc_tensor = torch.tensor(self.my_location).unsqueeze(0)  # Shape (1, 2)
+        
+        dists = torch.norm(my_loc_tensor - feature, dim=-1)
+        
         min_dist, _ = dists.min(dim=-1)
 
         if (dists < self.discrete_resolution/2).any(dim=-1):
             return 1.0
         else:
-            return torch.clamp(1.0 - (min_dist/self.scaled_max_dist), min=0.0, max=self.scaled_max_dist)
+            return torch.clamp(1.0 - (min_dist/self.scaled_max_dist), min=0.0, max=self.scaled_max_dist).item()
         
 
     def update_location(self, lat=None, lon=None):
