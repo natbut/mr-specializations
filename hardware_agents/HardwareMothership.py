@@ -65,7 +65,7 @@ class Mothership(HardwareAgent):
         
 
         # Load model
-        model, policy = self.initialize_model(model_conf_fp,
+        model, policy = self.initialize_policy(model_conf_fp,
                                             model_weights_fp,
                                             scenario_conf_fp,
                                             env_conf_fp
@@ -137,7 +137,7 @@ class Mothership(HardwareAgent):
         return heuristic_weights
     
 
-    def initialize_model(self, model_fp, weights_fp, scenario_fp, env_fp):
+    def initialize_policy(self, model_fp, weights_fp, scenario_fp, env_fp):
         """
         Initialize model for mothership coordination agent.
         """
@@ -227,6 +227,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run simulated hardware agents")
     parser.add_argument("--config_fp", type=str, required=True, help="Path to problem config file")    
     parser.add_argument("--robot_id", type=int, default=0, help="Mothership ID")
+    parser.add_argument("--sim_comms", type=bool, default=False, help="Dummy comms bool. Defaults to False (no simulated comms)")
 
     args = parser.parse_args()
 
@@ -239,9 +240,9 @@ if __name__ == "__main__":
 
     # Action loop
     while True:
-
-        # Process new comms messages
-        # TODO: Check for new msg, update mothership properties
+    
+        # Process any recieved messages
+        mothership.receive_messages()
 
         # Process planning commands
         if coordinate_trigger:
@@ -250,6 +251,10 @@ if __name__ == "__main__":
             mothership.send_spec_params_message() # create and share params
         else:
             print("Mothership socket waiting...")
+            
+        # Simulate message sending if enabled
+        if args.sim_comms:
+            mothership.dummy_send_messages() 
 
         time.sleep(1)
 
