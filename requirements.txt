@@ -16,6 +16,7 @@ PyYAML
 pillow
 moviepy
 tqdm
+pandas
 scipy
 
 # Install Torch-Geometric dependencies manually

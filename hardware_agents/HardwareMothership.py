@@ -211,10 +211,16 @@ class Mothership(HardwareAgent):
 
 
 
+base_ports = {
+        "plan": 10000,
+        "update": 11000,
+        "coordinate": 12000
+    }
+
 def listener():
     global coordinate_trigger
     s = socket.socket()
-    s.bind(('localhost', 9997)) 
+    s.bind(('localhost', base_ports["coordinate"])) 
     s.listen(1)
     while True:
         conn, _ = s.accept()
