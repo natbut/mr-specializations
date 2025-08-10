@@ -149,10 +149,12 @@ class Passenger(HardwareAgent):
         completed = []
         for t_id in self.scaled_obs["tasks_pos"]:
             t_pos = self.scaled_obs["tasks_pos"][t_id]
-            # If agent has reached task, mark task complete & sent messages
+            # If agent has reached task, mark task complete & send messages
             diff = [[t_pos[0]-self.my_location[0]], 
             [t_pos[1]-self.my_location[1]]]
-            if torch.norm(torch.tensor(diff)) < self.TASK_COMP_RANGE:
+            print("Task pos:", t_pos, "Passenger pos:", self.my_location)
+            print("!!! Task proximity:", torch.norm(torch.tensor(diff), dim=0))
+            if torch.norm(torch.tensor(diff), dim=0) < self.TASK_COMP_RANGE:
                 for a_id in range(1, self.num_passengers+1):
                     if a_id != self.my_id:
                         self.prepare_message("completed_task", a_id, t_id)
@@ -161,7 +163,6 @@ class Passenger(HardwareAgent):
                 
         for t_id in completed:
             self.scaled_obs["tasks_pos"].pop(t_id) # remove from own obs
-
 
 
     def create_plan(self):
@@ -293,7 +294,7 @@ class Passenger(HardwareAgent):
         """Update own current position from lat lon"""
         
         self.my_location = self.latlon_to_scaled(lat, lon)
-            
+        
 
 
 def save_waypoints_to_file(waypoints, filename="mission_plan.txt"):
@@ -371,6 +372,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run simulated hardware agents")
     parser.add_argument("--config_fp", type=str, required=True, help="Path to problem config file")
     parser.add_argument("--robot_id", type=int, default=1, help="Passenger ID")
+    parser.add_argument("--sim_comms", type=bool, default=False, help="Dummy comms bool. Defaults to False (no simulated comms)")
 
     args = parser.parse_args()
 
@@ -412,6 +414,10 @@ if __name__ == "__main__":
             passenger.create_plan() # create and save new plan
         else:
             print("Planning socket waiting...")
-
+            
+        # Simulate message sending if enabled
+        if args.sim_comms:
+            passenger.dummy_send_messages() 
+        
         time.sleep(1)
 

@@ -157,11 +157,31 @@ class HardwareAgent():
         print("Messages processed, moved to done folder")
 
 
-    def dummy_send_message(self, message):
+    def dummy_send_messages(self):
         """
-        Saves message to receiving agent's rx file location.
+        Saves messages in tx folder to receiving agents' rx file locations.
         """
-        pass
+        
+        fps = []        
+        for msg_fp in os.listdir(self.msg_tx_fp):
+            with open(os.path.join(self.msg_tx_fp, msg_fp), "r") as file:
+                msg_content = file.read()
+                msg = msg_content.strip().split("|")
+                target_id = int(msg[1])
+                # Save message to target agent's rx folder
+                target_rx_fp = os.path.join(self.messaging_fp, f"agent_{target_id}_rx", msg_fp)
+                os.makedirs(os.path.dirname(target_rx_fp), exist_ok=True)
+                with open(target_rx_fp, "w") as target_file:
+                    target_file.write(msg_content)
+            
+            fps.append(msg_fp)
+        
+        for msg_fp in fps:
+            # Move sent message to done folder
+            done_fp = os.path.join(self.msg_tx_done_fp, msg_fp)
+            os.rename(os.path.join(self.msg_tx_fp, msg_fp), done_fp)
+        print("Messages sent, moved to done folder")
+        
 
     
     def process_messages(self, msg_type, msg):
@@ -196,10 +216,17 @@ class HardwareAgent():
         Selects environment cell nearest to feature location
         """
 
-        # TODO cell key should be nearest discretized position to pos in obs_vec (last 2 elements)
+        # Cell key should be nearest discretized position to pos in obs_vec (last 2 elements)
+        obs_x = obs_vec[-2]
+        obs_y = obs_vec[-1]
         
-        # TODO cell value should be features in obs_vec
+        # Get nearest cell center to obs position (for now, let's just round to one decimal)
+        cell_x = round(obs_x, 1)
+        cell_y = round(obs_y, 1)
 
-        pass
+        # Cell value should be features in obs_vec
+        self.scaled_obs["cells"][(cell_x, cell_y)] = obs_vec[:-2]
+        
+        print("Updated cell observation, current cells:", self.scaled_obs["cells"])
                 
 
