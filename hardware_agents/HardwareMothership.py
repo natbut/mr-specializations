@@ -16,10 +16,8 @@ from torch.serialization import add_safe_globals, load
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, parent_dir)
 
-from envs.planning_env_vec import VMASPlanningEnv
 from envs.scenarios.explore_comms_tasks import Scenario
 from experiment_vec import create_actor, create_env, init_device
-from models.transformer import EnvironmentTransformer
 
 
 class Mothership(HardwareAgent):
@@ -57,7 +55,7 @@ class Mothership(HardwareAgent):
         # Initially assume all at mothership
         agents = {}
         for i in range(self.num_passengers):
-            agents[i] = copy.deepcopy(self.scaled_obs["mother_pos"])
+            agents[i+1] = copy.deepcopy(self.scaled_obs["mother_pos"])
         self.scaled_obs["agents_pos"] = agents
         print(f"Init scaled agents_pos:", self.scaled_obs["agents_pos"])
 
@@ -80,8 +78,9 @@ class Mothership(HardwareAgent):
         joint_specs = self._query_policy()
 
         # Parse policy output to get per-passenger params
-        for a_id, params in enumerate(joint_specs):
-            self.prepare_message("spec_params", a_id, (a_id, params))
+        for i, params in enumerate(joint_specs):
+            a_id = i+1
+            self.prepare_message("spec_params", a_id, (a_id, params.tolist()))
             
 
     def _query_policy(self):
@@ -92,20 +91,16 @@ class Mothership(HardwareAgent):
         
         # Create observation tensors
         print("Creating observation tensors...")
-        agents_pos = []
-        for a_id in self.scaled_obs["agents_pos"]:
-            agents_pos.append(self.scaled_obs["agents_pos"][a_id])
-
-        cell_feats = tensor(self.scaled_obs["cells"].values(),
+        cell_feats = tensor(list(self.scaled_obs["cells"].values()),
                           dtype=self.D_TYPE,
                           device=self.device)
-        cell_pos = tensor(self.scaled_obs["cells"].keys(),
+        cell_pos = tensor(list(self.scaled_obs["cells"].keys()),
                           dtype=self.D_TYPE,
                           device=self.device)
-        num_cells = tensor([len(self.scaled_obs["cells"])],
+        num_cells = tensor(len(self.scaled_obs["cells"]),
                            dtype=self.D_TYPE,
                            device=self.device)
-        rob_data = tensor(agents_pos,
+        rob_data = tensor(list(self.scaled_obs["agents_pos"].values()),
                           dtype=self.D_TYPE,
                           device=self.device)
         num_robs = tensor([self.num_passengers],
@@ -121,6 +116,7 @@ class Mothership(HardwareAgent):
         tdict.set("rob_data", rob_data)
         tdict.set("num_robs", num_robs) # TODO may need to max
         
+        print("Prepared tdict:", tdict)
 
         # Query model to get actions
         print("Running policy...")
@@ -128,9 +124,8 @@ class Mothership(HardwareAgent):
         
         heuristic_weights = actions["action"] 
         heuristic_weights = heuristic_weights.view(
-            heuristic_weights.shape[0],
             self.num_passengers,
-            len(self.num_specializations)
+            self.num_specializations
         ) # Breaks weights apart per-robot
         print("Specializations: ", heuristic_weights)
 
@@ -165,7 +160,8 @@ class Mothership(HardwareAgent):
         agent_attn=model_config["agent_attn"]
         cell_pos_as_features=model_config["cell_pos_as_features"]
         agent_id_enc = model_config["agent_id_enc"]
-        no_transformer = model_config.get("no_transformer", False)
+        use_encoder = model_config.get("use_encoder", True)
+        use_decoder = model_config.get("use_decoder", True)
         rob_pos_enc = model_config.get("rob_pos_enc", True)
 
         self.device = init_device()
@@ -186,7 +182,8 @@ class Mothership(HardwareAgent):
                                             agent_attn, 
                                             cell_pos_as_features, 
                                             agent_id_enc, 
-                                            no_transformer,
+                                            use_encoder,
+                                            use_decoder,
                                             rob_pos_enc,
                                             self.device
                                             )

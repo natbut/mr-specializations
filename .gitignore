@@ -164,6 +164,9 @@ cython_debug/
 runs/
 wandb/
 
+logs/
+msg/
+
 *.pt
 *.mp4
 *.csv

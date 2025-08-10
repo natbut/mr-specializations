@@ -195,7 +195,6 @@ class Passenger(HardwareAgent):
 
         current_pos = torch.tensor([self.my_location])
         heuristic_weights = torch.tensor([self.my_specializations])
-        heuristic_weights[0][0] = 1.0 # TODO remove this
 
         print("Nested obs:", obs)
         print("Heuristic weights:", heuristic_weights)
@@ -226,10 +225,10 @@ class Passenger(HardwareAgent):
         save_waypoints_to_file(latlon_plan, plan_path)
         self.num_plans += 1
         
-        self._visualize_plan(latlon_plan)
+        self._visualize_plan(latlon_plan, plan_path)
 
     
-    def _visualize_plan(self, plan):
+    def _visualize_plan(self, plan, log_fp):
         """
         Plot environment tasks, obstacles, agents, and plan waypoints
         
@@ -273,18 +272,26 @@ class Passenger(HardwareAgent):
             plt.scatter(plan_np[:, 1], plan_np[:, 0], c='orange', label='Plan', marker='.')
             plt.plot(plan_np[:, 1], plan_np[:, 0], c='orange', linestyle='--', alpha=0.7)
 
-        plt.xlabel('X')
-        plt.ylabel('Y')
+        plt.xlabel('Lon')
+        plt.ylabel('Lat')
         plt.title(f'Passenger {self.my_id} Plan Visualization')
+        plt.xlim(self.env_lon_min, self.env_lon_max)
+        plt.ylim(self.env_lat_max, self.env_lat_min)
         plt.legend()
         # plt.gca().invert_yaxis()
         plt.grid(True)
+        plt.savefig(log_fp.replace(".txt", ".png"))
         plt.show()
+        plt.close()
 
 
-    def _get_dist_feature_value(self, feature):
+    def _get_dist_feature_value(self, feature: torch.tensor):
         """ Compute distance feature value. Is 1.0 if feature is in same cell as agent. """
         
+        # Return 0.0 if feature tensor is empty
+        if feature.numel() == 0:
+            return 0.0
+
         my_loc_tensor = torch.tensor(self.my_location).unsqueeze(0)  # Shape (1, 2)
         
         dists = torch.norm(my_loc_tensor - feature, dim=-1)
@@ -407,7 +414,7 @@ if __name__ == "__main__":
                 passenger_latlon = ()
             passenger.send_location_obs_message()
             passenger.send_completed_task_message()
-            passenger.send_cell_obs_message() # TODO obs_vec (maybe only when triggered)
+            passenger.send_cell_obs_message()
         else:
             print("Update socket waiting...")
 

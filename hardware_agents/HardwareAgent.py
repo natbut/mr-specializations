@@ -1,3 +1,4 @@
+import ast
 import os
 
 import yaml
@@ -135,7 +136,7 @@ class HardwareAgent():
         Process messages in received messages (rx) folder.
         """
         if not os.path.exists(self.msg_rx_fp) or not os.listdir(self.msg_rx_fp):
-            print("No messages received yet.")
+            print("No messages received yet...")
             return
         
         # For each message in self.msg_rx_fp
@@ -189,27 +190,44 @@ class HardwareAgent():
     
     def process_messages(self, msg_type, msg):
         """Handle messages that apply both to Passengers and Mothership"""
-
+        
+        msg_tuple = ast.literal_eval(msg)
+        if not isinstance(msg_tuple, tuple):
+            msg_tuple = (msg_tuple,)
+        print("\tMessage tuple:", msg_tuple)
+            
         if "agent_pos" == msg_type: # Agent position updates
             # msg = (msg_type} {agent_id, agent_pos) MESSAGE FORMAT
             # scaled_obs[agents_pos] = {agent_id: agent_pos} STORED OBS FORMAT
-            self.scaled_obs["agents_pos"][msg[0]] = msg[1]
+            # msg is a string like '(1, [x_pos, y_pos])'
+            agent_id = msg_tuple[0]
+            agent_pos = msg_tuple[1]
+            print(f"Agent {agent_id} pos update:", agent_pos)
+            self.scaled_obs["agents_pos"][agent_id] = agent_pos
         elif "completed_task" == msg_type:
             # msg = (msg_type, task_id)
-            if self.scaled_obs["tasks_pos"][msg[0]]:
-                self.scaled_obs["tasks_pos"].pop(msg[0])
+            task_id = msg_tuple[0]
+            print("Removing completed task:", task_id, "from tasks:", self.scaled_obs["tasks_pos"])
+            if self.scaled_obs["tasks_pos"][task_id]:
+                self.scaled_obs["tasks_pos"].pop(task_id)
+            print("Remaining tasks:", self.scaled_obs["tasks_pos"])
         elif "new_task" == msg_type:
                 # msg = (msg_type, task_id, task_pos) MESSAGE FORMAT
                 # scaled_obs[tasks_pos] = {task_id: task_pos} STORED OBS FORMAT
-                self.scaled_obs["tasks_pos"][msg[0]] = msg[1]
+                self.scaled_obs["tasks_pos"][msg_tuple[0]] = msg_tuple[1]
         elif "spec_params" == msg_type:
             # msg = (msg_type, agent_id, spec_params)
-            if self.my_id == msg[0]:
-                self.my_specializations = msg[1]
+            if self.my_id == msg_tuple[0]:
+                self.my_specializations = msg_tuple[1]
         elif "obs_vec" == msg_type:
                 # msg = (msg_type, obs_vec)
-                obs_vec = msg[1]
+                obs_vec = msg_tuple[0]
                 self._update_env_cell(obs_vec)
+                
+                if self.my_id == 0:
+                    # Show mothership cell status
+                    for pos, features in self.scaled_obs["cells"].items():
+                        print(f"Cell feats at {pos}: {features}")
                 
                 
     def _update_env_cell(self, obs_vec):
@@ -228,6 +246,9 @@ class HardwareAgent():
         cell_y = round(obs_y, 1)
 
         # Cell value should be features in obs_vec
+        # Create cells dict if it doesn't exist
+        if "cells" not in self.scaled_obs:
+            self.scaled_obs["cells"] = {}
         self.scaled_obs["cells"][(cell_x, cell_y)] = obs_vec[:-2]
         
         print("Updated cell observation, current cells:", self.scaled_obs["cells"])
