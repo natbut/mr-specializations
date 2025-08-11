@@ -369,7 +369,7 @@ def update_listener(robot_id):
         update_trigger = True
         data = conn.recv(1024)
         passenger_latlon = struct.unpack(f'<{2}f', data)
-        print("UPDATE RECV:", passenger_latlon)
+        print("Listener recv:", passenger_latlon)
         conn.close()
 
 if __name__ == "__main__":
