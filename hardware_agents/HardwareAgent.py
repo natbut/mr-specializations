@@ -122,6 +122,9 @@ class HardwareAgent():
         text = msg_type+"|"+str(target_id)+"|"+str(contents)
         print("Prepared message text:", text)
         
+        # Remove spaces from message
+        text = text.replace(" ", "")
+
         # Write to file
         msg_fp = os.path.join(self.msg_tx_fp, f"msg_{self.tx_ct}.txt")
         self.tx_ct += 1

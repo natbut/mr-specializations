@@ -222,7 +222,11 @@ class Passenger(HardwareAgent):
         plan_name =  "mission_plan_"+str(self.num_plans)+".txt"
         plan_path = os.path.join(self.logs_fp, plan_name)
         os.makedirs(os.path.dirname(plan_path), exist_ok=True)
-        save_waypoints_to_file(latlon_plan, plan_path)
+        # Format plan for boat or sub
+        if self.my_id == 2:
+            save_waypoints_to_file(latlon_plan, plan_path, "boat")
+        elif self.my_id == 1:
+            save_waypoints_to_file(latlon_plan, plan_path, "sub")
         self.num_plans += 1
         
         self._visualize_plan(latlon_plan, plan_path)
@@ -310,14 +314,17 @@ class Passenger(HardwareAgent):
         self.my_location = self.latlon_to_scaled(lat, lon)
         
 
-
-def save_waypoints_to_file(waypoints, filename="mission_plan.txt"):
+def save_waypoints_to_file(waypoints,
+                           filename="mission_plan.txt",
+                           agent_type="boat"
+                           ):
     """
     Saves the waypoints to a file in the format supported by QGroundControl and Mission Planner.
     
     Args:
     - waypoints (list): List of waypoints in the format [[lat1, lon1], [lat2, lon2], ...].
     - filename (str): The file name where the mission plan will be saved.
+    - agent_type (str): Either "boat" for ArduRover or "sub" for ArduSub to adjust mission settings.
     """
     # Open file for writing
     with open(filename, "w") as file:
@@ -326,16 +333,26 @@ def save_waypoints_to_file(waypoints, filename="mission_plan.txt"):
 
         # Iterate over the waypoints to format and write them
         for idx, (lat, lon) in enumerate(waypoints):
-            # The structure of each waypoint row
-            # Format: <INDEX> <CURRENT WP> <COORD FRAME> <COMMAND> <PARAM1> <PARAM2> <PARAM3> <PARAM4> <PARAM5/X/LATITUDE> <PARAM6/Y/LONGITUDE> <PARAM7/Z/ALTITUDE> <AUTOCONTINUE>
-            # We assume the following fixed values for most params:
-            # - COMMAND: 16 (Navigation command)
-            # - COORD FRAME: 0 (Global frame)
-            # - PARAM1: 0.15 (This is a common parameter for waypoints)
-            # - PARAM2, PARAM3, PARAM4: 0 (Typically 0 for these params in a standard waypoint)
-            # - AUTOCONTINUE: 1 (Auto-continue flag)
-            # For this example, we're using the latitude, longitude, and a fixed altitude of 550 meters
-            file.write(f"{idx}\t1\t0\t16\t0.15\t0\t0\t0\t{lat:.10f}\t{lon:.10f}\t550\t1\n")
+            # Initialize common values
+            coord_frame = 0  # Global frame
+            command = 16  # MAV_CMD_NAV_WAYPOINT
+            param1 = 0.15  # Standard parameter for waypoints
+            param2 = param3 = param4 = 0  # Default parameters
+            autcontinue = 1  # Auto-continue flag
+            
+            # Set appropriate altitude depending on the agent type
+            if agent_type == "boat":
+                # For ArduRover (boat), we use a fixed positive altitude (550 meters)
+                altitude = 550
+            elif agent_type == "sub":
+                # For ArduSub (submarine), we use a negative depth (e.g., -1 meter)
+                altitude = -1
+            else:
+                # Default case, in case of an unrecognized agent type
+                altitude = 550  # Default to 550 meters (boat style)
+
+            # Write the waypoint line to the file
+            file.write(f"{idx}\t1\t{coord_frame}\t{command}\t{param1}\t{param2}\t{param3}\t{param4}\t{lon:.10f}\t{lat:.10f}\t{altitude}\t{autcontinue}\n")
 
     print(f"Mission plan saved to {filename}")
 
