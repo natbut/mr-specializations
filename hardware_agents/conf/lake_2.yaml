@@ -1,21 +1,21 @@
 
 # Approx 118m from tip to tip
-env_lat_min: 44.120731
-env_lat_max: 44.12003
-env_lon_min: -123.309093
-env_lon_max: -123.307175
+env_lat_min: 44.120823
+env_lat_max: 44.120298
+env_lon_min: -123.308682
+env_lon_max: -123.307915
 
-mothership_lat: 44.120596
-mothership_lon: -123.308542
+mothership_lat: 44.120789
+mothership_lon: -123.308536
 
 task_locs_latlon:
-- [44.120606, -123.308786]
-- [44.120400, -123.308542]
-- [44.120487, -123.30801]
+- [44.120568, -123.30806]
+- [44.120368, -123.3085]
+- [44.120479, -123.3083]
 
 obstacles_locs_latlon:
-- [44.120706, -123.3075]
-- [44.1202, -123.3086]
+- [44.120871, -123.308534]
+- [44.120988, -123.308517]
 
 num_passengers: 2
 

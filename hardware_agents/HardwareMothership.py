@@ -1,35 +1,41 @@
 
 import argparse
-import sys, os
-import socket, threading, time
 import copy
+import os
+import socket
+import sys
+import threading
+import time
 from collections import defaultdict
-from torch.serialization import load, add_safe_globals
-from torch import ones
-from torchrl.data import Bounded
-from torchrl.envs import EnvBase
 
 from HardwareAgent import *
+from tensordict import TensorDict
+from torch import float32, tensor
+from torch.serialization import add_safe_globals, load
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, parent_dir)
 
-from models.transformer import EnvironmentTransformer
-from experiment_vec import create_actor, init_device, create_env
-from envs.planning_env_vec import VMASPlanningEnv
 from envs.scenarios.explore_comms_tasks import Scenario
+from experiment_vec import create_actor, create_env, init_device
+
 
 class Mothership(HardwareAgent):
+    
+    D_TYPE = float32
 
-    def __init__(self):
+    def __init__(self, id):
         """Planning & comms coordination agent for Passenger robots."""
 
-        super().__init__()
+        super().__init__(id)
 
         self.recieved_obs = {} # Real observations, in lat/lon
         self.scaled_obs = {} # Observations scaled to [-1, 1]
 
         self.policy = None # Model for coordinating passenger robots
+        self.device = "cpu"
+        
+        self.num_specializations = 0 # Number of possible passenger specializations
 
     
     def load_deployment_config(self, config_fp):
@@ -37,25 +43,27 @@ class Mothership(HardwareAgent):
 
         with open(config_fp, 'r') as file:
             params = yaml.safe_load(file)
-            num_passengers = params["num_passengers"]
 
             model_conf_fp = params["model_conf_fp"]
             model_weights_fp = params["model_weights_fp"]
             scenario_conf_fp = params["scenario_conf_fp"]
             env_conf_fp = params["env_conf_fp"]
+            
+            self.num_specializations = len(params["heuristic_fns"])
 
         # Initialize agents pos observations
         # Initially assume all at mothership
         agents = {}
-        for i in range(num_passengers):
-            agents[i] = copy.deepcopy(self.scaled_obs["mother_pos"])
+        for i in range(self.num_passengers):
+            agents[i+1] = copy.deepcopy(self.scaled_obs["mother_pos"])
         self.scaled_obs["agents_pos"] = agents
         print(f"Init scaled agents_pos:", self.scaled_obs["agents_pos"])
 
         self.my_location = self.scaled_obs["mother_pos"]
+        
 
         # Load model
-        model, policy = self.initialize_model(model_conf_fp,
+        model, policy = self.initialize_policy(model_conf_fp,
                                             model_weights_fp,
                                             scenario_conf_fp,
                                             env_conf_fp
@@ -66,27 +74,65 @@ class Mothership(HardwareAgent):
     def send_spec_params_message(self):
         """
         Use model to find specialization parameters for agents.
-
-        Store params in file format to be sent out by acoustic modems.
         """
-        # TODO
+        joint_specs = self._query_policy()
 
-        # NOTE: Will need to parse policy output to get per-passenger params
+        # Parse policy output to get per-passenger params
+        for i, params in enumerate(joint_specs):
+            a_id = i+1
+            self.prepare_message("spec_params", a_id, (a_id, params.tolist()))
+            
 
-        self.prepare_message()
+    def _query_policy(self):
+        """
+        Perform forward pass of policy model to get agents specialization params.
+        
+        """
+        
+        # Create observation tensors
+        print("Creating observation tensors...")
+        cell_feats = tensor(list(self.scaled_obs["cells"].values()),
+                          dtype=self.D_TYPE,
+                          device=self.device)
+        cell_pos = tensor(list(self.scaled_obs["cells"].keys()),
+                          dtype=self.D_TYPE,
+                          device=self.device)
+        num_cells = tensor(len(self.scaled_obs["cells"]),
+                           dtype=self.D_TYPE,
+                           device=self.device)
+        rob_data = tensor(list(self.scaled_obs["agents_pos"].values()),
+                          dtype=self.D_TYPE,
+                          device=self.device)
+        num_robs = tensor([self.num_passengers],
+                          dtype=self.D_TYPE,
+                          device=self.device)
 
-        pass
+        # Configure observation tensordict
+        print("Creating tensordict...")
+        tdict = TensorDict()
+        tdict.set("cell_feats", cell_feats) # TODO may need to pad
+        tdict.set("cell_pos", cell_pos) # TODO may need to pad
+        tdict.set("num_cells", num_cells) # TODO may need to max
+        tdict.set("rob_data", rob_data)
+        tdict.set("num_robs", num_robs) # TODO may need to max
+        
+        print("Prepared tdict:", tdict)
 
-    def _query_model(self):
+        # Query model to get actions
+        print("Running policy...")
+        actions = self.policy.forward(tdict)
+        
+        heuristic_weights = actions["action"] 
+        heuristic_weights = heuristic_weights.view(
+            self.num_passengers,
+            self.num_specializations
+        ) # Breaks weights apart per-robot
+        print("Specializations: ", heuristic_weights)
 
-        # TODO
-        tdict = {}
+        return heuristic_weights
+    
 
-        self.policy.forward(tdict)
-
-        pass
-
-    def initialize_model(self, model_fp, weights_fp, scenario_fp, env_fp):
+    def initialize_policy(self, model_fp, weights_fp, scenario_fp, env_fp):
         """
         Initialize model for mothership coordination agent.
         """
@@ -114,13 +160,14 @@ class Mothership(HardwareAgent):
         agent_attn=model_config["agent_attn"]
         cell_pos_as_features=model_config["cell_pos_as_features"]
         agent_id_enc = model_config["agent_id_enc"]
-        no_transformer = model_config.get("no_transformer", False)
+        use_encoder = model_config.get("use_encoder", True)
+        use_decoder = model_config.get("use_decoder", True)
         rob_pos_enc = model_config.get("rob_pos_enc", True)
 
-        device = init_device()
+        self.device = init_device()
 
         dummy_env = create_env(Scenario(), 
-                               device, 
+                               self.device, 
                                env_config, 
                                scenario_config, 
                                check_specs=False
@@ -135,9 +182,10 @@ class Mothership(HardwareAgent):
                                             agent_attn, 
                                             cell_pos_as_features, 
                                             agent_id_enc, 
-                                            no_transformer,
+                                            use_encoder,
+                                            use_decoder,
                                             rob_pos_enc,
-                                            device
+                                            self.device
                                             )
         print("Model and policy created, loading weights...")
         
@@ -158,48 +206,18 @@ class Mothership(HardwareAgent):
         pass
 
 
-    def receive_message(self, message):
-        """Handle Mothership-specific messages."""
-        super().receive_message(message)
-
-        for i, msg in enumerate(self.received_message_buffer):
-            self.received_message_buffer.pop(i)
-
-            if "obs_vec" == msg[0]:
-                # msg = (msg_type, obs_vec)
-                obs_vec = msg[1]
-                self._update_env_cell(obs_vec)
 
 
-    def _update_env_cell(self, obs_vec):
-        """
-        Updates environment cell with observation vector information.
-        
-        Selects environment cell nearest to feature location
-        """
-
-        # TODO
-
-        pass
-
-
-    def _update_cell_dynamic_feats(self):
-        """
-        Updates the task and agent distance features (dynamic features) of
-        each cell prior to model inference.
-        
-        """
-
-        # TODO
-
-        pass
-
-
+base_ports = {
+        "plan": 10000,
+        "update": 11000,
+        "coordinate": 12000
+    }
 
 def listener():
     global coordinate_trigger
     s = socket.socket()
-    s.bind(('localhost', 9999)) 
+    s.bind(('localhost', base_ports["coordinate"])) 
     s.listen(1)
     while True:
         conn, _ = s.accept()
@@ -211,29 +229,23 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Run simulated hardware agents")
     parser.add_argument("--config_fp", type=str, required=True, help="Path to problem config file")    
-    # parser.add_argument("--model_fp", type=str, required=True, help="Path to model config file")
-    # parser.add_argument("--weights_fp", type=str, required=True, help="Path to model weights file")
-    parser.add_argument("--logs_fp", type=str, required=True, help="Path to logs folder")
-    parser.add_argument("--robot_id", type=int, default=0, help="Passenger ID")
+    parser.add_argument("--robot_id", type=int, default=0, help="Mothership ID")
+    parser.add_argument("--sim_comms", type=bool, default=False, help="Dummy comms bool. Defaults to False (no simulated comms)")
 
     args = parser.parse_args()
 
     # Create agent
-    mothership = Mothership()
+    mothership = Mothership(args.robot_id)
     mothership.load_deployment_config(args.config_fp) 
-    # mothership.initialize_model(args.model_fp, args.weights_fp)
 
-    # Comms initialization (as neeeded)
-    # TODO
-
-    # Planning initialization
+    # Trigger initialization
     threading.Thread(target=listener, daemon=True).start()
 
     # Action loop
     while True:
-
-        # Process new comms messages
-        # TODO: Check for new msg, update mothership properties
+    
+        # Process any recieved messages
+        mothership.receive_messages()
 
         # Process planning commands
         if coordinate_trigger:
@@ -241,7 +253,11 @@ if __name__ == "__main__":
             coordinate_trigger = False
             mothership.send_spec_params_message() # create and share params
         else:
-            print("Planning socket waiting...")
+            print("Mothership socket waiting...")
+            
+        # Simulate message sending if enabled
+        if args.sim_comms:
+            mothership.dummy_send_messages() 
 
         time.sleep(1)
 

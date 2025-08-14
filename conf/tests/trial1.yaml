@@ -5,7 +5,7 @@ agent_assignments:
 - SUPPORT
 - SUPPORT
 
-num_runs: 10
+num_runs: 8
 
 rollout_steps: 8
 
