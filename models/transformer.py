@@ -180,8 +180,8 @@ class EnvironmentTransformer(nn.Module):
         self.agent_id_enc = agent_id_enc
         self.agent_attn = agent_attn
         self.variable_team_size = variable_team_size
-        self.use_encoder = use_encoder,
-        self.use_decoder = use_decoder,
+        self.use_encoder = use_encoder
+        self.use_decoder = use_decoder
         self.rob_pos_enc = rob_pos_enc
 
         # Embeddings
@@ -203,6 +203,7 @@ class EnvironmentTransformer(nn.Module):
                 batch_first=True
             )
             self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+            print(f"Using transformer encoder; self.use_encoder={self.use_encoder}")
         if self.use_decoder:
             # Transformer decoder (self + cross-attention)
             decoder_layer = nn.TransformerDecoderLayer(
@@ -213,6 +214,7 @@ class EnvironmentTransformer(nn.Module):
                 batch_first=True
             )
             self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+            print(f"Using transformer decoder; self.use_decoder={self.use_decoder}")
 
 
         if self.agent_attn:
