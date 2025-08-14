@@ -195,7 +195,6 @@ class Passenger(HardwareAgent):
 
         current_pos = torch.tensor([self.my_location])
         heuristic_weights = torch.tensor([self.my_specializations])
-        heuristic_weights[0][0] = 1.0 # TODO remove this
 
         print("Nested obs:", obs)
         print("Heuristic weights:", heuristic_weights)
@@ -217,19 +216,25 @@ class Passenger(HardwareAgent):
         plan = [p.tolist() for p in plan]
         latlon_plan = [self.scaled_to_latlon(p[0], p[1]) for p in plan]
         
+        self.update_location(latlon_plan[0][0], latlon_plan[0][1])
+        
         # Save to file & visualize
         print(f"Passenger {self.my_id} processed plan: {plan}")
         print("Latlon plan:", latlon_plan)
-        plan_name =  "mission_plan_"+str(self.num_plans)+".txt"
+        plan_name =  "mission_plan_"+str(self.num_plans)+".plan"
         plan_path = os.path.join(self.logs_fp, plan_name)
         os.makedirs(os.path.dirname(plan_path), exist_ok=True)
-        save_waypoints_to_file(latlon_plan, plan_path)
+        # Format plan for boat or sub
+        if self.my_id == 2:
+            save_waypoints_to_file(latlon_plan, plan_path, "boat")
+        elif self.my_id == 1:
+            save_waypoints_to_file(latlon_plan, plan_path, "sub")
         self.num_plans += 1
         
-        self._visualize_plan(latlon_plan)
+        self._visualize_plan(latlon_plan, plan_path)
 
     
-    def _visualize_plan(self, plan):
+    def _visualize_plan(self, plan, log_fp):
         """
         Plot environment tasks, obstacles, agents, and plan waypoints
         
@@ -273,18 +278,26 @@ class Passenger(HardwareAgent):
             plt.scatter(plan_np[:, 1], plan_np[:, 0], c='orange', label='Plan', marker='.')
             plt.plot(plan_np[:, 1], plan_np[:, 0], c='orange', linestyle='--', alpha=0.7)
 
-        plt.xlabel('X')
-        plt.ylabel('Y')
+        plt.xlabel('Lon')
+        plt.ylabel('Lat')
         plt.title(f'Passenger {self.my_id} Plan Visualization')
+        plt.xlim(self.env_lon_min, self.env_lon_max)
+        plt.ylim(self.env_lat_max, self.env_lat_min)
         plt.legend()
         # plt.gca().invert_yaxis()
         plt.grid(True)
+        # plt.savefig(log_fp.replace(".plan", ".png"))
         plt.show()
+        plt.close()
 
 
-    def _get_dist_feature_value(self, feature):
+    def _get_dist_feature_value(self, feature: torch.tensor):
         """ Compute distance feature value. Is 1.0 if feature is in same cell as agent. """
         
+        # Return 0.0 if feature tensor is empty
+        if feature.numel() == 0:
+            return 0.0
+
         my_loc_tensor = torch.tensor(self.my_location).unsqueeze(0)  # Shape (1, 2)
         
         dists = torch.norm(my_loc_tensor - feature, dim=-1)
@@ -302,35 +315,136 @@ class Passenger(HardwareAgent):
         
         self.my_location = self.latlon_to_scaled(lat, lon)
         
+import json
 
+# Mapping for firmwareType values (QGC standard)
+FIRMWARE_TYPES = {
+    "boat": 12,  # ArduRover
+    "sub": 3    # ArduSub
+}
 
-def save_waypoints_to_file(waypoints, filename="mission_plan.txt"):
+# Mapping for vehicleType
+VEHICLE_TYPES = {
+    "boat": 2,  # Rover
+    "sub": 9    # Submarine
+}
+
+def save_waypoints_to_file(
+    waypoints,
+    filename="mission_plan.plan",
+    agent_type="sub",
+    use_current_depth=False,
+    current_depth=0.0,
+    home_position=None
+):
     """
-    Saves the waypoints to a file in the format supported by QGroundControl and Mission Planner.
-    
+    Saves waypoints to a QGroundControl-compatible .plan JSON file for ArduSub or ArduRover.
+
     Args:
-    - waypoints (list): List of waypoints in the format [[lat1, lon1], [lat2, lon2], ...].
-    - filename (str): The file name where the mission plan will be saved.
+        waypoints (list): List of [lat, lon] waypoints.
+        filename (str): Output filename.
+        agent_type (str): "boat" or "sub".
+        use_current_depth (bool): Use current ROV depth for all waypoints.
+        current_depth (float): Depth value (meters, negative).
+        home_position (list): [lat, lon, alt] for the home position. Required.
     """
-    # Open file for writing
-    with open(filename, "w") as file:
-        # Write the header for the QGC WPL file
-        file.write("QGC WPL 110\n")
+    if home_position is None:
+        # default to first waypoint with 0 altitude
+        home_position = [waypoints[0][1], waypoints[0][0], 0]
 
-        # Iterate over the waypoints to format and write them
-        for idx, (lat, lon) in enumerate(waypoints):
-            # The structure of each waypoint row
-            # Format: <INDEX> <CURRENT WP> <COORD FRAME> <COMMAND> <PARAM1> <PARAM2> <PARAM3> <PARAM4> <PARAM5/X/LATITUDE> <PARAM6/Y/LONGITUDE> <PARAM7/Z/ALTITUDE> <AUTOCONTINUE>
-            # We assume the following fixed values for most params:
-            # - COMMAND: 16 (Navigation command)
-            # - COORD FRAME: 0 (Global frame)
-            # - PARAM1: 0.15 (This is a common parameter for waypoints)
-            # - PARAM2, PARAM3, PARAM4: 0 (Typically 0 for these params in a standard waypoint)
-            # - AUTOCONTINUE: 1 (Auto-continue flag)
-            # For this example, we're using the latitude, longitude, and a fixed altitude of 550 meters
-            file.write(f"{idx}\t1\t0\t16\t0.15\t0\t0\t0\t{lat:.10f}\t{lon:.10f}\t550\t1\n")
+    plan = {
+        "fileType": "Plan",
+        "geoFence": {"circles": [], "polygons": [], "version": 2},
+        "groundStation": "QGroundControl",
+        "mission": {
+            "cruiseSpeed": 1,
+            "hoverSpeed": 0,
+            "globalPlanAltitudeMode": 1,
+            "firmwareType": FIRMWARE_TYPES.get(agent_type, 12),
+            "plannedHomePosition": home_position,
+            # "vehicleType": VEHICLE_TYPES.get(agent_type, 2),
+            # "version": 2,
+            "items": []
+        },
+        "rallyPoints": {"points": [], "version": 2},
+        "version": 1
+    }
+
+    for idx, (lat, lon) in enumerate(waypoints):
+        # Altitude/depth for this waypoint
+        if agent_type == "boat":
+            z = 550  # fixed altitude
+        elif agent_type == "sub":
+            z = current_depth if use_current_depth else -1
+        else:
+            z = 0
+
+        # QGC expects a 7-element params array:
+        # [param1, param2, param3, param4, x/lat, y/lon, z/alt]
+        params = [0.15, 0, 0, None, lat, lon, z]
+
+        item = {
+            "type": "SimpleItem",
+            "autoContinue": True,
+            "command": 16,      # MAV_CMD_NAV_WAYPOINT
+            "frame": 3,         # MAV_FRAME_GLOBAL_RELATIVE_ALT
+            "params": params,
+            "doJumpId": idx+1,
+            "Altitude": z,
+            "AltitudeMode": 0,
+            "AMSLAltAboveTerrain": None
+        }
+
+        plan["mission"]["items"].append(item)
+
+    with open(filename, "w") as f:
+        json.dump(plan, f, indent=2)
 
     print(f"Mission plan saved to {filename}")
+
+
+
+# def save_waypoints_to_file(waypoints,
+#                            filename="mission_plan.txt",
+#                            agent_type="boat"
+#                            ):
+#     """
+#     Saves the waypoints to a file in the format supported by QGroundControl and Mission Planner.
+    
+#     Args:
+#     - waypoints (list): List of waypoints in the format [[lat1, lon1], [lat2, lon2], ...].
+#     - filename (str): The file name where the mission plan will be saved.
+#     - agent_type (str): Either "boat" for ArduRover or "sub" for ArduSub to adjust mission settings.
+#     """
+#     # Open file for writing
+#     with open(filename, "w") as file:
+#         # Write the header for the QGC WPL file
+#         file.write("QGC WPL 110\n")
+
+#         # Iterate over the waypoints to format and write them
+#         for idx, (lat, lon) in enumerate(waypoints):
+#             # Initialize common values
+#             coord_frame = 0  # Global frame
+#             command = 16  # MAV_CMD_NAV_WAYPOINT
+#             param1 = 0.15  # Standard parameter for waypoints
+#             param2 = param3 = param4 = 0  # Default parameters
+#             autcontinue = 1  # Auto-continue flag
+            
+#             # Set appropriate altitude depending on the agent type
+#             if agent_type == "boat":
+#                 # For ArduRover (boat), we use a fixed positive altitude (550 meters)
+#                 altitude = 550
+#             elif agent_type == "sub":
+#                 # For ArduSub (submarine), we use a negative depth (e.g., -1 meter)
+#                 altitude = -1
+#             else:
+#                 # Default case, in case of an unrecognized agent type
+#                 altitude = 550  # Default to 550 meters (boat style)
+
+#             # Write the waypoint line to the file
+#             file.write(f"{idx}\t1\t{coord_frame}\t{command}\t{param1}\t{param2}\t{param3}\t{param4}\t{lat:.10f}\t{lon:.10f}\t{altitude}\t{autcontinue}\n")
+
+#     print(f"Mission plan saved to {filename}")
 
 
 base_ports = {
@@ -362,7 +476,7 @@ def update_listener(robot_id):
         update_trigger = True
         data = conn.recv(1024)
         passenger_latlon = struct.unpack(f'<{2}f', data)
-        print("UPDATE RECV:", passenger_latlon)
+        print("Listener recv:", passenger_latlon)
         conn.close()
 
 if __name__ == "__main__":
@@ -407,7 +521,7 @@ if __name__ == "__main__":
                 passenger_latlon = ()
             passenger.send_location_obs_message()
             passenger.send_completed_task_message()
-            passenger.send_cell_obs_message() # TODO obs_vec (maybe only when triggered)
+            passenger.send_cell_obs_message()
         else:
             print("Update socket waiting...")
 
