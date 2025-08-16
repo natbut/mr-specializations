@@ -319,14 +319,14 @@ import json
 
 # Mapping for firmwareType values (QGC standard)
 FIRMWARE_TYPES = {
-    "boat": 12,  # ArduRover
-    "sub": 3    # ArduSub
+    "boat": 3,  # ArduRover (3 from QGC)
+    "sub": 3    # ArduSub (3 from QGC)
 }
 
 # Mapping for vehicleType
 VEHICLE_TYPES = {
     "boat": 2,  # Rover
-    "sub": 9    # Submarine
+    "sub": 12    # Submarine
 }
 
 def save_waypoints_to_file(
@@ -348,10 +348,7 @@ def save_waypoints_to_file(
         current_depth (float): Depth value (meters, negative).
         home_position (list): [lat, lon, alt] for the home position. Required.
     """
-    if home_position is None:
-        # default to first waypoint with 0 altitude
-        home_position = [waypoints[0][1], waypoints[0][0], 0]
-
+    
     plan = {
         "fileType": "Plan",
         "geoFence": {"circles": [], "polygons": [], "version": 2},
@@ -362,37 +359,42 @@ def save_waypoints_to_file(
             "globalPlanAltitudeMode": 1,
             "firmwareType": FIRMWARE_TYPES.get(agent_type, 12),
             "plannedHomePosition": home_position,
-            # "vehicleType": VEHICLE_TYPES.get(agent_type, 2),
+            "vehicleType": VEHICLE_TYPES.get(agent_type, 2),
             # "version": 2,
             "items": []
         },
         "rallyPoints": {"points": [], "version": 2},
         "version": 1
     }
+    
+    # Altitude/depth for this waypoint
+    if agent_type == "boat":
+        z = 550  # fixed altitude
+    elif agent_type == "sub":
+        z = current_depth if use_current_depth else -1
+    else:
+        z = 0
+    
+    if home_position is None:
+        # default to first waypoint with 0 altitude
+        home_position = [waypoints[0][0], waypoints[0][1], z]
 
     for idx, (lat, lon) in enumerate(waypoints):
-        # Altitude/depth for this waypoint
-        if agent_type == "boat":
-            z = 550  # fixed altitude
-        elif agent_type == "sub":
-            z = current_depth if use_current_depth else -1
-        else:
-            z = 0
 
         # QGC expects a 7-element params array:
-        # [param1, param2, param3, param4, x/lat, y/lon, z/alt]
-        params = [0.15, 0, 0, None, lat, lon, z]
+        # [hold_time (s), param2, pass_rad(m), param4, x/lat, y/lon, z/alt]
+        params = [3, 0, 1, None, lat, lon, 0] # NOTE: first param was 0.15
 
         item = {
-            "type": "SimpleItem",
+            "AMSLAltAboveTerrain": None,
+            "Altitude": 0,
+            "AltitudeMode": 1,
             "autoContinue": True,
             "command": 16,      # MAV_CMD_NAV_WAYPOINT
+            "doJumpId": idx+1,
             "frame": 3,         # MAV_FRAME_GLOBAL_RELATIVE_ALT
             "params": params,
-            "doJumpId": idx+1,
-            "Altitude": z,
-            "AltitudeMode": 0,
-            "AMSLAltAboveTerrain": None
+            "type": "SimpleItem"
         }
 
         plan["mission"]["items"].append(item)
