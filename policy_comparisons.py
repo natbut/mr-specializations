@@ -88,6 +88,16 @@ def test_setup(test_index: int,
         use_decoder = False
         print(f"No transformer policy; use_encoder={use_encoder}, use_decoder={use_decoder}")
 
+    action_softmax = model_config.get("action_softmax", False)
+    action_max = model_config.get("action_max", False)
+    print(f"Action max: {action_max}")
+    if action_softmax == True:
+        print("Using action softmax")
+        env.base_env.use_softmax = True
+    elif action_max == True:
+        print("Using action max")
+        env.base_env.use_max = True
+
     tf_act, policy_module = create_actor(
         env, 
         num_features, 

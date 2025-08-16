@@ -159,6 +159,7 @@ class VMASPlanningEnv(EnvBase):
             max_indices = torch.argmax(heuristic_weights, dim=-1, keepdim=True)
             heuristic_weights = torch.zeros_like(heuristic_weights)
             heuristic_weights.scatter_(-1, max_indices, 1.0)
+            print("Using max action selection; weights are:", heuristic_weights)
         if self.render:
             print(f"\nHeuristic Weights:\n {heuristic_weights} Shape: {heuristic_weights.shape}") # [B, N_AGENTS, N_FEATS]
         # print("WEIGHTS SAMPLE:", heuristic_weights[:5], "shape:", heuristic_weights.shape)
