@@ -7,7 +7,7 @@ agent_assignments:
 
 num_runs: 50 # 50
 
-rollout_steps: 8 # 8
+rollout_steps: 16 # 8
 
 planning_iters: 1
 

@@ -2,13 +2,17 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Reload the latest uploaded CSV file after reset
-df_newest = pd.read_csv("evaluations\\data\\results2.csv")
+df_newest = pd.read_csv("evaluations\\data\\results.csv")
 
 # Sum rewards within each run for each model_config
 sum_per_run_newest = df_newest.groupby(['model_config', 'run'])['reward'].sum().reset_index()
 
 # Compute mean and std of these sums for each model_config
 grouped_sum_newest = sum_per_run_newest.groupby('model_config')['reward'].agg(['mean', 'std']).reset_index()
+
+grouped_sum_newest = grouped_sum_newest.drop([1], axis=0).reset_index(drop=True)
+
+print("Results:", grouped_sum_newest)
 
 # Plot
 plt.figure(figsize=(8, 6))
