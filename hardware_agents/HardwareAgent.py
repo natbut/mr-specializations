@@ -1,4 +1,5 @@
 import ast
+import datetime
 import os
 
 import yaml
@@ -52,7 +53,7 @@ class HardwareAgent():
             self.env_lon_min = params["env_lon_min"]
             
             self.num_passengers = params["num_passengers"]
-            self.messaging_fp = params["messaging_fp"]
+            messaging_fp = params["messaging_fp"]
             logs_fp = params["logs_fp"]
 
             mothership_lat = params["mothership_lat"]
@@ -73,7 +74,12 @@ class HardwareAgent():
         print(f"Init scaled mother_pos:", self.scaled_obs["mother_pos"])
         print(f"Init scaled tasks_pos:", self.scaled_obs["tasks_pos"])
         
-        # Prepare messaging paths
+        # Prepare logs & messaging paths
+        timestamp = datetime.datetime.now().strftime("%H_%M_%S")
+        self.messaging_fp = messaging_fp #messaging_fp.rstrip("\\/") + f"_{timestamp}\\"
+        # self.messaging_fp = os.path.join(messaging_fp.rstrip("\\/"), f"_{timestamp}\\")
+        self.logs_fp = logs_fp.rstrip("\\/") + "_" + str(self.my_id) + f"_{timestamp}"
+        # self.logs_fp = os.path.join(logs_fp.rstrip("\\/"), f"_{timestamp}\\")
         self.msg_tx_fp = self.messaging_fp+f"agent_{self.my_id}_tx"
         self.msg_rx_fp = self.messaging_fp+f"agent_{self.my_id}_rx"
         self.msg_tx_done_fp = self.messaging_fp+f"agent_{self.my_id}_tx_done"
@@ -85,7 +91,7 @@ class HardwareAgent():
         os.makedirs(self.msg_rx_done_fp, exist_ok=True)
         
         # Logging folder path
-        self.logs_fp=logs_fp+"_"+str(self.my_id)
+        # self.logs_fp=logs_fp+
 
     
     def init_env_scaling(self):
@@ -126,7 +132,8 @@ class HardwareAgent():
         text = text.replace(" ", "")
 
         # Write to file
-        msg_fp = os.path.join(self.msg_tx_fp, f"msg_{self.tx_ct}.txt")
+        timestamp = datetime.datetime.now().strftime("%H_%M_%S")
+        msg_fp = os.path.join(self.msg_tx_fp, f"msg_{self.tx_ct}_{timestamp}.txt")
         self.tx_ct += 1
         with open(msg_fp, "w") as file:
             file.write(text)
@@ -139,7 +146,7 @@ class HardwareAgent():
         Process messages in received messages (rx) folder.
         """
         if not os.path.exists(self.msg_rx_fp) or not os.listdir(self.msg_rx_fp):
-            print("No messages received yet...")
+            # print("No messages received yet...")
             return
         
         # For each message in self.msg_rx_fp

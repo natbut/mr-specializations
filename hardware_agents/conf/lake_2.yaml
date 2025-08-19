@@ -9,8 +9,13 @@ mothership_lat: 44.120789
 mothership_lon: -123.308536
 
 task_locs_latlon:
-- [44.120568, -123.30806]
-- [44.120368, -123.3085]
+# near
+# - [44.120768, -123.308603]
+- [44.120714, -123.308465]
+# - [44.120779, -123.308303]
+# far
+# - [44.120568, -123.30806]
+# - [44.120368, -123.3085]
 - [44.120479, -123.3083]
 
 obstacles_locs_latlon:
@@ -39,4 +44,5 @@ scenario_conf_fp: "..\\conf\\scenarios\\comms_5.yaml"
 env_conf_fp:  "..\\conf\\envs\\planning_env_explore_5.yaml"
 
 messaging_fp: "msg\\"
+plans_fp: "plans\\"
 logs_fp: "logs\\"

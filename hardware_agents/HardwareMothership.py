@@ -252,7 +252,6 @@ if __name__ == "__main__":
             print("Planning triggered")
             coordinate_trigger = False
             mothership.send_spec_params_message() # create and share params
-        else:
             print("Mothership socket waiting...")
             
         # Simulate message sending if enabled

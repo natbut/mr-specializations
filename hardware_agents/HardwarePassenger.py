@@ -1,5 +1,8 @@
 import argparse
 import copy
+import csv
+import datetime
+import json
 import os
 import socket
 import struct
@@ -69,6 +72,11 @@ class Passenger(HardwareAgent):
             obstacles_latlon = params["obstacles_locs_latlon"]
             
             num_passengers = params["num_passengers"]
+            
+            plans_fp = params["plans_fp"]           
+        
+        timestamp = datetime.datetime.now().strftime("%H_%M_%S")
+        self.plans_fp = plans_fp.rstrip("\\/") + "_" + str(self.my_id) + f"_{timestamp}"
 
         # Initialize other agents' and obstacles pos observations
         # Initially assume at mothership
@@ -216,13 +224,25 @@ class Passenger(HardwareAgent):
         plan = [p.tolist() for p in plan]
         latlon_plan = [self.scaled_to_latlon(p[0], p[1]) for p in plan]
         
-        self.update_location(latlon_plan[0][0], latlon_plan[0][1])
+        timestamp = datetime.datetime.now().strftime("%H_%M_%S")
+        logs_csv_path = os.path.join(self.logs_fp, "plans.csv")
+        os.makedirs(os.path.dirname(logs_csv_path), exist_ok=True)
+        write_header = not os.path.exists(logs_csv_path)
+
+        with open(logs_csv_path, "a", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            if write_header:
+                writer.writerow(["timestamp", "specializaions", "latlon_plan"])
+            writer.writerow([timestamp, self.my_specializations, latlon_plan])
+            
+        # NOTE AUTO-UPDATE AGENT LOCATION TO LAST POINT IN PLAN
+        self.update_location(latlon_plan[-1][0], latlon_plan[-1][1])
         
         # Save to file & visualize
         print(f"Passenger {self.my_id} processed plan: {plan}")
         print("Latlon plan:", latlon_plan)
         plan_name =  "mission_plan_"+str(self.num_plans)+".plan"
-        plan_path = os.path.join(self.logs_fp, plan_name)
+        plan_path = os.path.join(self.plans_fp, plan_name)
         os.makedirs(os.path.dirname(plan_path), exist_ok=True)
         # Format plan for boat or sub
         if self.my_id == 2:
@@ -241,52 +261,63 @@ class Passenger(HardwareAgent):
         Plan is in scaled [lat (y), lon (x)]
         """
 
-        plt.figure(figsize=(8, 6))
+        plt.figure(figsize=(14, 6))
+
+        # Main environment plot (left)
+        ax_env = plt.subplot(1, 2, 1)
 
         # Plot tasks
         tasks = list(self.scaled_obs["tasks_pos"].values())
         tasks = [self.scaled_to_latlon(p[0], p[1]) for p in tasks]
         if tasks:
             tasks = torch.tensor(tasks).numpy()
-            plt.scatter(tasks[:, 1], tasks[:, 0], c='green', label='Tasks', marker='o')
+            ax_env.scatter(tasks[:, 1], tasks[:, 0], c='green', label='Tasks', marker='o')
 
         # Plot obstacles
         obstacles = list(self.scaled_obs["obstacles_pos"].values())
         obstacles = [self.scaled_to_latlon(p[0], p[1]) for p in obstacles]
         if obstacles:
             obstacles = torch.tensor(obstacles).numpy()
-            plt.scatter(obstacles[:, 1], obstacles[:, 0], c='red', label='Obstacles', marker='x')
+            ax_env.scatter(obstacles[:, 1], obstacles[:, 0], c='red', label='Obstacles', marker='x')
 
         # Plot agents (others + my_location)
         agents = list(self.scaled_obs["agents_pos"].values())
         agents = [self.scaled_to_latlon(p[0], p[1]) for p in agents]
-        agents.append(self.scaled_to_latlon(self.my_location[0], 
-                                            self.my_location[1]
-                                            )
-                      )
+        agents.append(self.scaled_to_latlon(self.my_location[0], self.my_location[1]))
         if agents:
             agents = torch.tensor(agents).numpy()
-            plt.scatter(agents[:, 1], agents[:, 0], c='blue', label='Agents', marker='^')
+            ax_env.scatter(agents[:, 1], agents[:, 0], c='blue', label='Agents', marker='^')
 
         # Plot base/mothership
         mother = torch.tensor(self.scaled_to_latlon(self.scaled_obs["mother_pos"][0], self.scaled_obs["mother_pos"][1])).numpy()
-        plt.scatter(mother[1], mother[0], c='purple', label='Base', marker='s')
+        ax_env.scatter(mother[1], mother[0], c='purple', label='Base', marker='s')
 
         # Plot plan waypoints
         if plan is not None and len(plan) > 0:
             plan_np = torch.tensor(plan).numpy()
-            plt.scatter(plan_np[:, 1], plan_np[:, 0], c='orange', label='Plan', marker='.')
-            plt.plot(plan_np[:, 1], plan_np[:, 0], c='orange', linestyle='--', alpha=0.7)
+            ax_env.scatter(plan_np[:, 1], plan_np[:, 0], c='orange', label='Plan', marker='.')
+            ax_env.plot(plan_np[:, 1], plan_np[:, 0], c='orange', linestyle='--', alpha=0.7)
 
-        plt.xlabel('Lon')
-        plt.ylabel('Lat')
-        plt.title(f'Passenger {self.my_id} Plan Visualization')
-        plt.xlim(self.env_lon_min, self.env_lon_max)
-        plt.ylim(self.env_lat_max, self.env_lat_min)
-        plt.legend()
-        # plt.gca().invert_yaxis()
-        plt.grid(True)
-        # plt.savefig(log_fp.replace(".plan", ".png"))
+        ax_env.set_xlabel('Lon')
+        ax_env.set_ylabel('Lat')
+        ax_env.set_title(f'Passenger {self.my_id} Plan Visualization')
+        ax_env.set_xlim(self.env_lon_min, self.env_lon_max)
+        ax_env.set_ylim(self.env_lat_max, self.env_lat_min)
+        ax_env.legend()
+        ax_env.grid(True)
+
+        # Specializations bar chart (right)
+        ax_spec = plt.subplot(1, 2, 2)
+        spec_vals = self.my_specializations
+        spec_labels = [f"H{i+1}" for i in range(len(spec_vals))]
+        ax_spec.bar(spec_labels, spec_vals, color='skyblue')
+        ax_spec.set_title("Specialization Weights")
+        ax_spec.set_ylabel("Weight Value")
+        ax_spec.set_ylim(0, max(1.0, max(spec_vals) if spec_vals else 1.0))
+        for i, v in enumerate(spec_vals):
+            ax_spec.text(i, v + 0.01, f"{v:.2f}", ha='center', va='bottom', fontsize=9)
+
+        plt.tight_layout()
         plt.show()
         plt.close()
 
@@ -315,7 +346,6 @@ class Passenger(HardwareAgent):
         
         self.my_location = self.latlon_to_scaled(lat, lon)
         
-import json
 
 # Mapping for firmwareType values (QGC standard)
 FIRMWARE_TYPES = {
@@ -406,49 +436,6 @@ def save_waypoints_to_file(
 
 
 
-# def save_waypoints_to_file(waypoints,
-#                            filename="mission_plan.txt",
-#                            agent_type="boat"
-#                            ):
-#     """
-#     Saves the waypoints to a file in the format supported by QGroundControl and Mission Planner.
-    
-#     Args:
-#     - waypoints (list): List of waypoints in the format [[lat1, lon1], [lat2, lon2], ...].
-#     - filename (str): The file name where the mission plan will be saved.
-#     - agent_type (str): Either "boat" for ArduRover or "sub" for ArduSub to adjust mission settings.
-#     """
-#     # Open file for writing
-#     with open(filename, "w") as file:
-#         # Write the header for the QGC WPL file
-#         file.write("QGC WPL 110\n")
-
-#         # Iterate over the waypoints to format and write them
-#         for idx, (lat, lon) in enumerate(waypoints):
-#             # Initialize common values
-#             coord_frame = 0  # Global frame
-#             command = 16  # MAV_CMD_NAV_WAYPOINT
-#             param1 = 0.15  # Standard parameter for waypoints
-#             param2 = param3 = param4 = 0  # Default parameters
-#             autcontinue = 1  # Auto-continue flag
-            
-#             # Set appropriate altitude depending on the agent type
-#             if agent_type == "boat":
-#                 # For ArduRover (boat), we use a fixed positive altitude (550 meters)
-#                 altitude = 550
-#             elif agent_type == "sub":
-#                 # For ArduSub (submarine), we use a negative depth (e.g., -1 meter)
-#                 altitude = -1
-#             else:
-#                 # Default case, in case of an unrecognized agent type
-#                 altitude = 550  # Default to 550 meters (boat style)
-
-#             # Write the waypoint line to the file
-#             file.write(f"{idx}\t1\t{coord_frame}\t{command}\t{param1}\t{param2}\t{param3}\t{param4}\t{lat:.10f}\t{lon:.10f}\t{altitude}\t{autcontinue}\n")
-
-#     print(f"Mission plan saved to {filename}")
-
-
 base_ports = {
         "plan": 10000,
         "update": 11000,
@@ -477,8 +464,9 @@ def update_listener(robot_id):
         conn, _ = s.accept()
         update_trigger = True
         data = conn.recv(1024)
-        passenger_latlon = struct.unpack(f'<{2}f', data)
-        print("Listener recv:", passenger_latlon)
+        if len(data) > 0:
+            passenger_latlon = struct.unpack(f'<{2}f', data)
+            print("Listener recv:", passenger_latlon)
         conn.close()
 
 if __name__ == "__main__":
@@ -487,6 +475,7 @@ if __name__ == "__main__":
     - Automatically read new message files
     - Create new plan when python trigger_passenger.py is ran
     """
+    print("Initializing Passenger...")
 
     planning_trigger = False
     update_trigger = False
@@ -510,6 +499,7 @@ if __name__ == "__main__":
     threading.Thread(target=update_listener, 
                      args=(args.robot_id,), 
                      daemon=True).start()
+    print("Starting action loop.")
 
     # Action loop
     while True:
@@ -519,13 +509,17 @@ if __name__ == "__main__":
             print("Updating triggered")
             update_trigger = False
             if len(passenger_latlon) > 0:
+                print("Updating passenger location with provided latlon")
                 passenger.update_location(passenger_latlon[0], passenger_latlon[1])
                 passenger_latlon = ()
+            else:
+                print("Sending passenger stored latlon from plan end pt")
             passenger.send_location_obs_message()
+            print("Sending completed tasks")
             passenger.send_completed_task_message()
+            print("Sending cell obs")
             passenger.send_cell_obs_message()
-        else:
-            print("Update socket waiting...")
+            print("Update done. Update socket waiting...")
 
         # Process any recieved messages
         passenger.receive_messages()
@@ -535,8 +529,7 @@ if __name__ == "__main__":
             print("Planning triggered")
             planning_trigger = False
             passenger.create_plan() # create and save new plan
-        else:
-            print("Planning socket waiting...")
+            print("Planning done. Planning socket waiting...")
             
         # Simulate message sending if enabled
         if args.sim_comms:

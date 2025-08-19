@@ -236,14 +236,16 @@ class AgentLauncherApp(tk.Tk):
         def on_update_send(content_str: str):
             # Accept arbitrary whitespace-separated numbers, but enforce numeric for update (your trigger expects floats)
             tokens = shlex.split(content_str.strip()) if content_str.strip() else []
-            if not tokens:
-                messagebox.showerror("Invalid content", "Provide numeric content for Update (e.g., '44.12 -123.30').")
-                return
-            try:
-                floats = [float(t) for t in tokens]
-            except ValueError:
-                messagebox.showerror("Invalid content", "Update content must be numeric (whitespace-separated).")
-                return
+            
+            # if not tokens:
+            #     messagebox.showerror("Invalid content", "Provide numeric content for Update (e.g., '44.12 -123.30').")
+            #     return
+            # try:
+            #     floats = [float(t) for t in tokens]
+            # except ValueError:
+            #     messagebox.showerror("Invalid content", "Update content must be numeric (whitespace-separated).")
+            #     return
+            
             # If you want exactly 2 floats (lat, lon), uncomment:
             # if len(floats) != 2:
             #     messagebox.showerror("Invalid content", "For Update, provide exactly two numbers: 'lat lon'.")
@@ -254,7 +256,7 @@ class AgentLauncherApp(tk.Tk):
         tile = ttk.Frame(parent, relief="groove", padding=10)
         tile.pack(side="left", padx=8, pady=4, fill="x")
         ttk.Label(tile, text="Update", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        ttk.Label(tile, text="Send numeric update payload (e.g., lat lon)", foreground="#555").pack(anchor="w", pady=(2,6))
+        ttk.Label(tile, text="Send numeric update payload (e.g., lat lon). Must do on startup.", foreground="#555").pack(anchor="w", pady=(2,6))
         content_var = tk.StringVar(value="")
         ttk.Entry(tile, textvariable=content_var, width=40).pack(anchor="w", pady=(0,6))
         ttk.Button(tile, text="Send Update", command=lambda: on_update_send(content_var.get())).pack(anchor="w")
@@ -274,16 +276,17 @@ class AgentLauncherApp(tk.Tk):
         # For UPDATE, split content into separate argv tokens to satisfy argparse nargs='+'
         if trig_type == "update":
             tokens = shlex.split(content.strip()) if content.strip() else []
-            if not tokens:
-                messagebox.showerror("Invalid content", "Provide numeric content for Update (e.g., '44.12 -123.30').")
-                return
-            # Validate numeric now so trigger.py doesn't exit silently
-            try:
-                _ = [float(t) for t in tokens]
-            except ValueError:
-                messagebox.showerror("Invalid content", "Update content must be numeric.")
-                return
-            cmd += ["--content"] + tokens
+            # if not tokens:
+            #     messagebox.showerror("Invalid content", "Provide numeric content for Update (e.g., '44.12 -123.30').")
+            #     return
+            # # Validate numeric now so trigger.py doesn't exit silently
+            # try:
+            #     _ = [float(t) for t in tokens]
+            # except ValueError:
+            #     messagebox.showerror("Invalid content", "Update content must be numeric.")
+            #     return
+            if len(tokens) > 0:
+                cmd += ["--content"] + tokens
 
         # plan/coordinate have no content in your trigger.py
 

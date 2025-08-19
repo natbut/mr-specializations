@@ -28,7 +28,10 @@ if __name__ == "__main__":
         if args.type == "plan":
             s.sendall(b'planning_trigger')
         elif args.type == "update":
-            content_byt = struct.pack(f'<{2}f', *args.content)
+            if args.content:
+                content_byt = struct.pack(f'<{2}f', *args.content)
+            else:
+                content_byt = b''
             s.sendall(content_byt)
         elif args.type == "coordinate":
             s.sendall(b'coordinate_trigger')
