@@ -41,3 +41,4 @@ env_conf_fp:  "..\\conf\\envs\\planning_env_explore_5.yaml"
 
 messaging_fp: "msg\\"
 logs_fp: "logs\\"
+plans_fp: "plans\\"

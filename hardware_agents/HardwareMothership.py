@@ -8,6 +8,7 @@ import threading
 import time
 from collections import defaultdict
 
+import torch
 from HardwareAgent import *
 from tensordict import TensorDict
 from torch import float32, tensor
@@ -50,6 +51,8 @@ class Mothership(HardwareAgent):
             env_conf_fp = params["env_conf_fp"]
             
             self.num_specializations = len(params["heuristic_fns"])
+            
+            self.use_max = params.get("action_max", False)
 
         # Initialize agents pos observations
         # Initially assume all at mothership
@@ -82,12 +85,76 @@ class Mothership(HardwareAgent):
             a_id = i+1
             self.prepare_message("spec_params", a_id, (a_id, params.tolist()))
             
+    def _update_dist_feature_value(self, loc, feature: torch.tensor):
+        # Return 0.0 if feature tensor is empty
+        if feature.numel() == 0:
+            return 0.0
+
+        loc_tensor = torch.tensor(loc).unsqueeze(0)  # Shape (1, 2)
+        
+        dists = torch.norm(loc_tensor - feature, dim=-1)
+
+        if self.sparse:
+            # Sum distances of features within discrete_resolution/2
+            mask = dists < self.discrete_resolution / 2
+            return dists[mask].sum().item() if mask.any() else 0.0
+
+        min_dist, _ = dists.min(dim=-1)
+        if (dists < self.discrete_resolution / 2).any(dim=-1):
+            return 1.0
+        else:
+            return torch.clamp(1.0 - (min_dist / self.scaled_max_dist), min=0.0, max=self.scaled_max_dist).item()
+        
+        """ Compute distance feature value. Is 1.0 if feature is in same cell as agent. """
+        
+        # Return 0.0 if feature tensor is empty
+        # if feature.numel() == 0:
+        #     return 0.0
+
+        # loc_tensor = torch.tensor(loc).unsqueeze(0)  # Shape (1, 2)
+        
+        # dists = torch.norm(loc_tensor - feature, dim=-1)
+        
+        # min_dist, _ = dists.min(dim=-1)
+
+        # if (dists < self.discrete_resolution/2).any(dim=-1):
+        #     return 1.0
+        # else:
+        #     return torch.clamp(1.0 - (min_dist/self.scaled_max_dist), min=0.0, max=self.scaled_max_dist).item()
+            
 
     def _query_policy(self):
         """
         Perform forward pass of policy model to get agents specialization params.
         
         """
+        
+        # !! Update cell features for tasks and agents !!
+        # 1) Prep obs to tensors
+        tasks_tensor = torch.tensor(list(self.scaled_obs["tasks_pos"].values()))
+        agents_tensor = torch.tensor(list(self.scaled_obs["agents_pos"].values()))
+        for cell_pos in self.scaled_obs["cells"].keys():
+        
+            # Compute feature values
+            task_obs = self._update_dist_feature_value(cell_pos, tasks_tensor)
+            agent_obs = self._update_dist_feature_value(cell_pos, agents_tensor)
+            
+            # obs_vec = [task_obs,
+            #        obst_obs,
+            #        agent_obs,
+            #        frontiers_obs,
+            #        exploration_obs,
+            #        mother_obs,
+            #        ]
+            
+            print(f"Updating cell {cell_pos}: {self.scaled_obs["cells"][cell_pos]}")
+            
+            self.scaled_obs["cells"][cell_pos][0] = task_obs
+            self.scaled_obs["cells"][cell_pos][2] = agent_obs
+            # self.scaled_obs["cells"][cell_pos][3] = 1.0
+            
+            print(f"To {cell_pos}: {self.scaled_obs["cells"][cell_pos]}" )
+            
         
         # Create observation tensors
         print("Creating observation tensors...")
@@ -120,13 +187,20 @@ class Mothership(HardwareAgent):
 
         # Query model to get actions
         print("Running policy...")
-        actions = self.policy.forward(tdict)
+        actions = self.policy.forward(tdict)        
         
         heuristic_weights = actions["action"] 
         heuristic_weights = heuristic_weights.view(
             self.num_passengers,
             self.num_specializations
         ) # Breaks weights apart per-robot
+        
+        if self.use_max:
+            # Set the max value in each H vector to 1, others to 0
+            max_indices = torch.argmax(heuristic_weights, dim=-1, keepdim=True)
+            heuristic_weights = torch.zeros_like(heuristic_weights)
+            heuristic_weights.scatter_(-1, max_indices, 1.0)
+        
         print("Specializations: ", heuristic_weights)
 
         return heuristic_weights
@@ -207,11 +281,10 @@ class Mothership(HardwareAgent):
 
 
 
-
 base_ports = {
         "plan": 10000,
         "update": 11000,
-        "coordinate": 12000
+        "coordinate": 9999
     }
 
 def listener():
@@ -249,7 +322,7 @@ if __name__ == "__main__":
 
         # Process planning commands
         if coordinate_trigger:
-            print("Planning triggered")
+            print("Coordinate triggered")
             coordinate_trigger = False
             mothership.send_spec_params_message() # create and share params
             print("Mothership socket waiting...")

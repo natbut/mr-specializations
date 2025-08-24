@@ -152,7 +152,7 @@ class AgentLauncherApp(tk.Tk):
         ]
 
         try:
-            launch_in_new_terminal(cmd, cwd=wd)
+            launch_in_new_terminal(cmd, cwd=wd, keep_open=True)
         except FileNotFoundError:
             messagebox.showerror("Launch error", f"Could not find script '{script}' in: {wd}")
         except Exception as e:
@@ -291,7 +291,7 @@ class AgentLauncherApp(tk.Tk):
         # plan/coordinate have no content in your trigger.py
 
         try:
-            launch_in_new_terminal(cmd, cwd=wd)
+            launch_in_new_terminal(cmd, cwd=wd, keep_open=False)
         except FileNotFoundError:
             messagebox.showerror("Launch error", f"Could not find 'trigger.py' in: {wd}")
         except Exception as e:

@@ -180,8 +180,8 @@ class EnvironmentTransformer(nn.Module):
         self.agent_id_enc = agent_id_enc
         self.agent_attn = agent_attn
         self.variable_team_size = variable_team_size
-        self.use_encoder = use_encoder,
-        self.use_decoder = use_decoder,
+        self.use_encoder = use_encoder
+        self.use_decoder = use_decoder
         self.rob_pos_enc = rob_pos_enc
 
         # Embeddings
@@ -193,7 +193,7 @@ class EnvironmentTransformer(nn.Module):
         # if agent_id_enc:
         self.agent_embed = nn.Embedding(max_robots, d_model)
 
-        if self.use_encoder:
+        if self.use_encoder == True:
             # Transformer encoder
             encoder_layer = nn.TransformerEncoderLayer(
                 d_model=d_model,
@@ -203,7 +203,8 @@ class EnvironmentTransformer(nn.Module):
                 batch_first=True
             )
             self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        if self.use_decoder:
+            print(f"Using transformer encoder; self.use_encoder={self.use_encoder}")
+        if self.use_decoder == True:
             # Transformer decoder (self + cross-attention)
             decoder_layer = nn.TransformerDecoderLayer(
                 d_model=d_model,
@@ -213,9 +214,10 @@ class EnvironmentTransformer(nn.Module):
                 batch_first=True
             )
             self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+            print(f"Using transformer decoder; self.use_decoder={self.use_decoder}")
 
 
-        if self.agent_attn:
+        if self.agent_attn == True:
             self.agent_cross_attn = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
 
         # Output head: raw logits for Categorical
@@ -243,7 +245,7 @@ class EnvironmentTransformer(nn.Module):
         # Transformer's `src_key_padding_mask` expects True for masked elements.
 
         # === Encoder input ===
-        if self.cell_pos_as_features:
+        if self.cell_pos_as_features == True:
             cell_feats_with_pos = torch.cat([cell_features, cell_positions], dim=-1)
             # print("\nSampled Features:", cell_feats_with_pos[0][:5])
             x_feat = self.feature_embed(cell_feats_with_pos)
@@ -253,7 +255,7 @@ class EnvironmentTransformer(nn.Module):
             x_pos = self.pos_embed(cell_positions) # Use the linear embedding for positions
             x = x_feat + x_pos
         
-        if self.use_encoder:
+        if self.use_encoder == True:
             # Pass the mask to the encoder
             enc_out = self.encoder(x, src_key_padding_mask=mask)
         else:
@@ -306,7 +308,7 @@ class EnvironmentTransformer(nn.Module):
 
         # === Add positional & agent-ID embeddings ===
         # For padded robots, their positions are meaningless, so mask their embeddings
-        if self.rob_pos_enc:
+        if self.rob_pos_enc == True:
             robot_pos_enc = self.pos_embed(robot_pos)  # [B, R, D]
             robot_pos_enc = robot_pos_enc * robot_mask.unsqueeze(-1)  # Zero out embeddings for padded robots
             robot_tokens = robot_tokens + robot_pos_enc
@@ -321,7 +323,7 @@ class EnvironmentTransformer(nn.Module):
         #     aggr_rew_enc = aggr_rew_enc * robot_mask.unsqueeze(-1)  # Zero out embeddings for padded robots
         #     robot_tokens = robot_tokens + aggr_rew_enc
 
-        if self.agent_id_enc:
+        if self.agent_id_enc == True:
             id_indices = torch.arange(self.max_robots, device=robot_tokens.device)[None, :]
             agent_id_enc = self.agent_embed(id_indices).expand(B, -1, -1)
             agent_id_enc = agent_id_enc[:, :R, :]  # Slice to match actual number of robots
@@ -331,14 +333,14 @@ class EnvironmentTransformer(nn.Module):
         # print("Added id encoding:", robot_tokens[:5])
 
         # === Decoder ===
-        if self.use_decoder:
+        if self.use_decoder == True:
             # The `memory_key_padding_mask` tells the decoder to ignore padded elements in `enc_out` (memory)
             decoder_out = self.decoder(tgt=robot_tokens, memory=enc_out, memory_key_padding_mask=mask, tgt_key_padding_mask=~robot_mask)
             decoder_out = decoder_out * robot_mask.unsqueeze(-1)  # Mask before output_head
         else:
             decoder_out = robot_tokens
         # print("Decoder out pre-attn:", decoder_out[:5])
-        if self.agent_attn:
+        if self.agent_attn == True:
             cross_agents, _ = self.agent_cross_attn(decoder_out, decoder_out, decoder_out, key_padding_mask=~robot_mask)
             decoder_out = decoder_out + cross_agents * robot_mask.unsqueeze(-1)
 

@@ -14,14 +14,17 @@ if __name__ == "__main__":
     base_ports = {
         "plan": 10000,
         "update": 11000,
-        "coordinate": 12000
+        "coordinate": 9999
     }
 
     if args.type not in base_ports:
         raise ValueError("Invalid trigger_type. Must be one of: plan, update, coordinate.")
 
     # Each robot gets a unique port by adding robot_id to the base port
-    port = base_ports[args.type] + args.robot_id
+    if args.robot_id > 0:
+        port = base_ports[args.type] * args.robot_id
+    else:
+        port = base_ports[args.type]
 
     with socket.socket() as s:
         s.connect(('localhost', port))

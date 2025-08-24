@@ -253,6 +253,18 @@ def eval(scenario, scenario_configs, env_configs, model_configs, checkpt_fp, sav
     use_encoder = model_config.get("use_encoder", True)
     use_decoder = model_config.get("use_decoder", True)
     rob_pos_enc = model_config.get("rob_pos_enc", True)
+    no_transformer = model_config.get("no_transformer", False)
+    if no_transformer:
+        use_encoder = False
+        use_decoder = False
+    action_softmax = model_config.get("action_softmax", False)
+    action_max = model_config.get("action_max", False)
+    if action_softmax == True:
+        print("Using action softmax")
+        env.base_env.use_softmax = True
+    elif action_max == True:
+        print("Using action max")
+        env.base_env.use_max = True
     tf_act, policy_module = create_actor(env,
                                          num_features,
                                          num_heuristics,
@@ -330,6 +342,18 @@ def train_PPO(scenario,
     use_encoder = model_config.get("use_encoder", True)
     use_decoder = model_config.get("use_decoder", True)
     rob_pos_enc = model_config.get("rob_pos_enc", True)
+    no_transformer = model_config.get("no_transformer", False)
+    if no_transformer:
+        use_encoder = False
+        use_decoder = False
+    action_softmax = model_config.get("action_softmax", False)
+    action_max = model_config.get("action_max", False)
+    if action_softmax == True:
+        print("Using action softmax")
+        env.base_env.use_softmax = True
+    elif action_max == True:
+        print("Using action max")
+        env.base_env.use_max = True
     tf_act, policy_module = create_actor(env,
                                          num_features,
                                          num_heuristics,
@@ -345,12 +369,7 @@ def train_PPO(scenario,
                                          )
     tf_crit, value_module = create_critic(num_features, d_model, cell_pos_as_features, device)
 
-    action_softmax = model_config.get("action_softmax", False)
-    action_max = model_config.get("action_max", False)
-    if action_softmax:
-        env.use_softmax = True
-    elif action_max:
-        env.use_max = True
+    
 
     print("Running policy:", policy_module(env.reset()))
     print("Running value:", value_module(env.reset())) # NOTE leave this in to init lazy modules

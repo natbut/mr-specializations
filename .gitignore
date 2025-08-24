@@ -166,9 +166,13 @@ wandb/
 
 logs/
 msg/
+plan/
+old/
+server/
 
 *.pt
 *.mp4
 *.csv
 *.png
 *.gif
+*.plan

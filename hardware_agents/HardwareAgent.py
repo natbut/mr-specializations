@@ -26,6 +26,8 @@ class HardwareAgent():
         
         self.num_passengers = 0
         
+        self.num_passengers = 0
+        
         self.scaled_obs = {} # Observations scaled to [-1, 1]
 
         self.discrete_resolution = 0
@@ -39,6 +41,7 @@ class HardwareAgent():
         self.msg_rx_done_fp = "" # completed received message storage
         self.tx_ct = 0
         self.rx_ct = 0
+        
 
 
     def load_deployment_config(self, config_fp):
@@ -60,6 +63,8 @@ class HardwareAgent():
             mothership_lon = params["mothership_lon"]
 
             tasks_latlon = params["task_locs_latlon"]
+            
+            self.sparse = params.get("sparse", False)
 
         # Set up scaling parameters
         self.init_env_scaling()
@@ -103,6 +108,8 @@ class HardwareAgent():
         self.lon_offset = -1.0 - self.env_lon_min * self.lon_scale
 
     def latlon_to_scaled(self, lat, lon):
+        scaled_y = round(self.lat_scale * lat + self.lat_offset, 4)
+        scaled_x = round(self.lon_scale * lon + self.lon_offset, 4)
         scaled_y = round(self.lat_scale * lat + self.lat_offset, 4)
         scaled_x = round(self.lon_scale * lon + self.lon_offset, 4)
         return [scaled_y, scaled_x]
@@ -199,6 +206,31 @@ class HardwareAgent():
 
     
     def process_messages(self, msg_type, msg):
+        
+        fps = []        
+        for msg_fp in os.listdir(self.msg_tx_fp):
+            with open(os.path.join(self.msg_tx_fp, msg_fp), "r") as file:
+                msg_content = file.read()
+                msg = msg_content.strip().split("|")
+                target_id = int(msg[1])
+                # Save message to target agent's rx folder
+                target_rx_fp = os.path.join(self.messaging_fp, f"agent_{target_id}_rx", msg_fp)
+                os.makedirs(os.path.dirname(target_rx_fp), exist_ok=True)
+                with open(target_rx_fp, "w") as target_file:
+                    target_file.write(msg_content)
+            
+            fps.append(msg_fp)
+        
+        for msg_fp in fps:
+            # Move sent message to done folder, overwrite if exists
+            done_fp = os.path.join(self.msg_tx_done_fp, msg_fp)
+            if os.path.exists(done_fp):
+                os.remove(done_fp)
+            os.rename(os.path.join(self.msg_tx_fp, msg_fp), done_fp)
+        
+
+    
+    def process_messages(self, msg_type, msg):
         """Handle messages that apply both to Passengers and Mothership"""
         
         msg_tuple = ast.literal_eval(msg)
@@ -230,14 +262,15 @@ class HardwareAgent():
             if self.my_id == msg_tuple[0]:
                 self.my_specializations = msg_tuple[1]
         elif "obs_vec" == msg_type:
-                # msg = (msg_type, obs_vec)
-                obs_vec = msg_tuple[0]
-                self._update_env_cell(obs_vec)
-                
-                if self.my_id == 0:
-                    # Show mothership cell status
-                    for pos, features in self.scaled_obs["cells"].items():
-                        print(f"Cell feats at {pos}: {features}")
+            # msg = (msg_type, obs_vec)
+            obs_vec = msg_tuple[0]
+            self._update_env_cell(obs_vec)
+            
+            if self.my_id == 0:
+                # Show mothership cell status
+                for pos, features in self.scaled_obs["cells"].items():
+                    print(f"Cell feats at {pos}: {features}")
+            
                 
                 
     def _update_env_cell(self, obs_vec):

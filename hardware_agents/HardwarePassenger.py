@@ -38,6 +38,7 @@ class Passenger(HardwareAgent):
         """Planning & comms coordination agent for Passenger robots."""
 
         super().__init__(id)
+        super().__init__(id)
 
         self.my_specializations = [] # Specialization parameters from Mothership
         self.heuristic_fns = [] # Functions used to evaluate plan heuristics
@@ -47,6 +48,7 @@ class Passenger(HardwareAgent):
         self.plan_goal_samp_freq: 0.0 # Goal point sampling frequency
         self.plan_step_size: 0.0 # Plan step size
         
+        self.latlon_plan = []
         self.num_plans = 0 # counter for number of plans created
 
 
@@ -63,6 +65,7 @@ class Passenger(HardwareAgent):
 
             self.heuristic_fns = [load_func(name) for name in params["heuristic_fns"]]
             self.my_specializations = [0.0 for _ in self.heuristic_fns]
+            self.my_specializations[0] = 1.0 # Set default to do tasks
 
             self.plan_horizon = params.get("plan_horizon", 0.25)
             self.sampling_pts = params.get("sampling_pts", 50)
@@ -113,6 +116,7 @@ class Passenger(HardwareAgent):
         tasks_tensor = torch.tensor(list(self.scaled_obs["tasks_pos"].values()))
         obsts_tensor = torch.tensor(list(self.scaled_obs["obstacles_pos"].values()))
         agents_tensor = torch.tensor(list(self.scaled_obs["agents_pos"].values()))
+        
 
         # Compute feature values
         task_obs = self._get_dist_feature_value(tasks_tensor)
@@ -152,10 +156,30 @@ class Passenger(HardwareAgent):
     def send_completed_task_message(self):
         """
         Send message when agent has completed a task.
-
-        Store in file format to be sent out by acoustic modems.
         """
 
+        # Process "task completion" & get task_id
+        completed = []
+        for t_id in self.scaled_obs["tasks_pos"]:
+            t_pos = self.scaled_obs["tasks_pos"][t_id]
+            for wp_pos in self.latlon_plan+[self.my_location]:
+                # If agent has reached task, mark task complete & send messages
+                diff = [[t_pos[0]-wp_pos[0]], 
+                [t_pos[1]-wp_pos[1]]]
+                print("Task pos:", t_pos, "WP pos:", wp_pos)
+                print("!!! Task proximity:", torch.norm(torch.tensor(diff), dim=0))
+                if torch.norm(torch.tensor(diff), dim=0) < self.TASK_COMP_RANGE:
+                    for a_id in range(1, self.num_passengers+1):
+                        if a_id != self.my_id:
+                            self.prepare_message("completed_task", a_id, t_id)
+                    self.prepare_message("completed_task", 0, t_id)
+                    completed.append(t_id)
+                
+        for t_id in completed:
+            self.scaled_obs["tasks_pos"].pop(t_id) # remove from own obs
+
+
+    def create_plan(self):
         # Process "task completion" & get task_id
         completed = []
         for t_id in self.scaled_obs["tasks_pos"]:
@@ -196,6 +220,7 @@ class Passenger(HardwareAgent):
         for o in self.scaled_obs["obstacles_pos"]:
             obstacles.append(self.scaled_obs["obstacles_pos"][o])
 
+
         obs["obs_tasks"] = torch.tensor([tasks])
         obs["obs_agents"] = torch.tensor([agents])
         obs["obs_obstacles"] = torch.tensor([obstacles])
@@ -223,6 +248,7 @@ class Passenger(HardwareAgent):
         
         plan = [p.tolist() for p in plan]
         latlon_plan = [self.scaled_to_latlon(p[0], p[1]) for p in plan]
+        self.latlon_plan = latlon_plan
         
         timestamp = datetime.datetime.now().strftime("%H_%M_%S")
         logs_csv_path = os.path.join(self.logs_fp, "plans.csv")
@@ -234,9 +260,6 @@ class Passenger(HardwareAgent):
             if write_header:
                 writer.writerow(["timestamp", "specializaions", "latlon_plan"])
             writer.writerow([timestamp, self.my_specializations, latlon_plan])
-            
-        # NOTE AUTO-UPDATE AGENT LOCATION TO LAST POINT IN PLAN
-        self.update_location(latlon_plan[-1][0], latlon_plan[-1][1])
         
         # Save to file & visualize
         print(f"Passenger {self.my_id} processed plan: {plan}")
@@ -244,17 +267,19 @@ class Passenger(HardwareAgent):
         plan_name =  "mission_plan_"+str(self.num_plans)+".plan"
         plan_path = os.path.join(self.plans_fp, plan_name)
         os.makedirs(os.path.dirname(plan_path), exist_ok=True)
+        self.num_plans += 1
         # Format plan for boat or sub
         if self.my_id == 2:
             save_waypoints_to_file(latlon_plan, plan_path, "boat")
         elif self.my_id == 1:
             save_waypoints_to_file(latlon_plan, plan_path, "sub")
-        self.num_plans += 1
         
         self._visualize_plan(latlon_plan, plan_path)
+        
+        # NOTE AUTO-UPDATE AGENT LOCATION TO LAST POINT IN PLAN
+        self.update_location(latlon_plan[-1][0], latlon_plan[-1][1])
 
-    
-    def _visualize_plan(self, plan, log_fp):
+    def _visualize_plan(self, plan, plan_path):
         """
         Plot environment tasks, obstacles, agents, and plan waypoints
         
@@ -318,27 +343,32 @@ class Passenger(HardwareAgent):
             ax_spec.text(i, v + 0.01, f"{v:.2f}", ha='center', va='bottom', fontsize=9)
 
         plt.tight_layout()
+        plt.savefig(plan_path.replace('.plan', '.png'))
         plt.show()
         plt.close()
 
 
     def _get_dist_feature_value(self, feature: torch.tensor):
-        """ Compute distance feature value. Is 1.0 if feature is in same cell as agent. """
-        
+        """Compute distance feature value. Is 1.0 if feature is in same cell as agent.
+        If sparse=True, returns sum of feature dists within self.discrete_resolution/2.
+        """
         # Return 0.0 if feature tensor is empty
         if feature.numel() == 0:
             return 0.0
 
         my_loc_tensor = torch.tensor(self.my_location).unsqueeze(0)  # Shape (1, 2)
-        
         dists = torch.norm(my_loc_tensor - feature, dim=-1)
-        
-        min_dist, _ = dists.min(dim=-1)
 
-        if (dists < self.discrete_resolution/2).any(dim=-1):
+        if self.sparse:
+            # Sum distances of features within discrete_resolution/2
+            mask = dists < self.discrete_resolution / 2
+            return dists[mask].sum().item() if mask.any() else 0.0
+
+        min_dist, _ = dists.min(dim=-1)
+        if (dists < self.discrete_resolution / 2).any(dim=-1):
             return 1.0
         else:
-            return torch.clamp(1.0 - (min_dist/self.scaled_max_dist), min=0.0, max=self.scaled_max_dist).item()
+            return torch.clamp(1.0 - (min_dist / self.scaled_max_dist), min=0.0, max=self.scaled_max_dist).item()
         
 
     def update_location(self, lat=None, lon=None):
@@ -355,9 +385,10 @@ FIRMWARE_TYPES = {
 
 # Mapping for vehicleType
 VEHICLE_TYPES = {
-    "boat": 2,  # Rover
+    "boat": 10,  # Rover
     "sub": 12    # Submarine
 }
+
 
 def save_waypoints_to_file(
     waypoints,
@@ -377,7 +408,25 @@ def save_waypoints_to_file(
         use_current_depth (bool): Use current ROV depth for all waypoints.
         current_depth (float): Depth value (meters, negative).
         home_position (list): [lat, lon, alt] for the home position. Required.
+        waypoints (list): List of [lat, lon] waypoints.
+        filename (str): Output filename.
+        agent_type (str): "boat" or "sub".
+        use_current_depth (bool): Use current ROV depth for all waypoints.
+        current_depth (float): Depth value (meters, negative).
+        home_position (list): [lat, lon, alt] for the home position. Required.
     """
+    
+    # Altitude/depth for this waypoint
+    if agent_type == "boat":
+        z = 550  # fixed altitude
+    elif agent_type == "sub":
+        z = current_depth if use_current_depth else -1
+    else:
+        z = 0
+    
+    if home_position is None:
+        # default to first waypoint with 0 altitude
+        home_position = [waypoints[0][0], waypoints[0][1], z]
     
     plan = {
         "fileType": "Plan",
@@ -396,18 +445,6 @@ def save_waypoints_to_file(
         "rallyPoints": {"points": [], "version": 2},
         "version": 1
     }
-    
-    # Altitude/depth for this waypoint
-    if agent_type == "boat":
-        z = 550  # fixed altitude
-    elif agent_type == "sub":
-        z = current_depth if use_current_depth else -1
-    else:
-        z = 0
-    
-    if home_position is None:
-        # default to first waypoint with 0 altitude
-        home_position = [waypoints[0][0], waypoints[0][1], z]
 
     for idx, (lat, lon) in enumerate(waypoints):
 
@@ -439,14 +476,13 @@ def save_waypoints_to_file(
 base_ports = {
         "plan": 10000,
         "update": 11000,
-        "coordinate": 12000
     }
 
 def planning_listener(robot_id):
     global planning_trigger
     s = socket.socket()
-    print("Starting planning listener on port:",  base_ports["plan"]+robot_id)
-    s.bind(('localhost', base_ports["plan"]+robot_id))
+    print("Starting planning listener on port:",  base_ports["plan"]*robot_id)
+    s.bind(('localhost', base_ports["plan"]*robot_id))
     s.listen(1)
     while True:
         conn, _ = s.accept()
@@ -457,8 +493,8 @@ def update_listener(robot_id):
     global update_trigger
     global passenger_latlon
     s = socket.socket()
-    print("Starting update listener on port:",  base_ports["update"]+robot_id)
-    s.bind(('localhost', base_ports["update"]+robot_id))
+    print("Starting update listener on port:",  base_ports["update"]*robot_id)
+    s.bind(('localhost', base_ports["update"]*robot_id))
     s.listen(1)
     while True:
         conn, _ = s.accept()
