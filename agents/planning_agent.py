@@ -777,7 +777,7 @@ def _is_path_obstacle_free(obs, start, end, world_idx, num_checks=10):
             return False
     return True
 
-def _obstacle_free_check(obs, world_idx, pos, buffer=0.05, verbose=False):
+def _obstacle_free_check(obs, world_idx, pos, buffer=0.01, verbose=False):
     """
     Returns true if pos is not within buffer radius of the centerpoint
     of any obstacles in agent's observations

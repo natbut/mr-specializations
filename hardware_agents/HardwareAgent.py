@@ -1,11 +1,16 @@
 import ast
+import datetime
 import os
 
 import yaml
 
 
+
 class HardwareAgent():
 
+    def __init__(self, id):
+        
+        self.my_id = id
     def __init__(self, id):
         
         self.my_id = id
@@ -25,6 +30,8 @@ class HardwareAgent():
         
         self.num_passengers = 0
         
+        self.num_passengers = 0
+        
         self.scaled_obs = {} # Observations scaled to [-1, 1]
 
         self.discrete_resolution = 0
@@ -38,6 +45,7 @@ class HardwareAgent():
         self.msg_rx_done_fp = "" # completed received message storage
         self.tx_ct = 0
         self.rx_ct = 0
+        
 
 
     def load_deployment_config(self, config_fp):
@@ -52,13 +60,15 @@ class HardwareAgent():
             self.env_lon_min = params["env_lon_min"]
             
             self.num_passengers = params["num_passengers"]
-            self.messaging_fp = params["messaging_fp"]
+            messaging_fp = params["messaging_fp"]
             logs_fp = params["logs_fp"]
 
             mothership_lat = params["mothership_lat"]
             mothership_lon = params["mothership_lon"]
 
             tasks_latlon = params["task_locs_latlon"]
+            
+            self.sparse = params.get("sparse", False)
 
         # Set up scaling parameters
         self.init_env_scaling()
@@ -73,7 +83,12 @@ class HardwareAgent():
         print(f"Init scaled mother_pos:", self.scaled_obs["mother_pos"])
         print(f"Init scaled tasks_pos:", self.scaled_obs["tasks_pos"])
         
-        # Prepare messaging paths
+        # Prepare logs & messaging paths
+        timestamp = datetime.datetime.now().strftime("%H_%M_%S")
+        self.messaging_fp = messaging_fp #messaging_fp.rstrip("\\/") + f"_{timestamp}\\"
+        # self.messaging_fp = os.path.join(messaging_fp.rstrip("\\/"), f"_{timestamp}\\")
+        self.logs_fp = logs_fp.rstrip("\\/") + "_" + str(self.my_id) + f"_{timestamp}"
+        # self.logs_fp = os.path.join(logs_fp.rstrip("\\/"), f"_{timestamp}\\")
         self.msg_tx_fp = self.messaging_fp+f"agent_{self.my_id}_tx"
         self.msg_rx_fp = self.messaging_fp+f"agent_{self.my_id}_rx"
         self.msg_tx_done_fp = self.messaging_fp+f"agent_{self.my_id}_tx_done"
@@ -85,7 +100,7 @@ class HardwareAgent():
         os.makedirs(self.msg_rx_done_fp, exist_ok=True)
         
         # Logging folder path
-        self.logs_fp=logs_fp+"_"+str(self.my_id)
+        # self.logs_fp=logs_fp+
 
     
     def init_env_scaling(self):
@@ -99,6 +114,8 @@ class HardwareAgent():
     def latlon_to_scaled(self, lat, lon):
         scaled_y = round(self.lat_scale * lat + self.lat_offset, 4)
         scaled_x = round(self.lon_scale * lon + self.lon_offset, 4)
+        scaled_y = round(self.lat_scale * lat + self.lat_offset, 4)
+        scaled_x = round(self.lon_scale * lon + self.lon_offset, 4)
         return [scaled_y, scaled_x]
 
     def scaled_to_latlon(self, scaled_lat, scaled_lon):
@@ -107,6 +124,7 @@ class HardwareAgent():
         return [lat, lon]
 
 
+    def prepare_message(self, msg_type, target_id, contents):
     def prepare_message(self, msg_type, target_id, contents):
         """
         Prepare contents to be transmitted by comms modems.
@@ -126,7 +144,8 @@ class HardwareAgent():
         text = text.replace(" ", "")
 
         # Write to file
-        msg_fp = os.path.join(self.msg_tx_fp, f"msg_{self.tx_ct}.txt")
+        timestamp = datetime.datetime.now().strftime("%H_%M_%S")
+        msg_fp = os.path.join(self.msg_tx_fp, f"msg_{self.tx_ct}_{timestamp}.txt")
         self.tx_ct += 1
         with open(msg_fp, "w") as file:
             file.write(text)
@@ -139,7 +158,7 @@ class HardwareAgent():
         Process messages in received messages (rx) folder.
         """
         if not os.path.exists(self.msg_rx_fp) or not os.listdir(self.msg_rx_fp):
-            print("No messages received yet...")
+            # print("No messages received yet...")
             return
         
         # For each message in self.msg_rx_fp
@@ -167,6 +186,31 @@ class HardwareAgent():
         """
         Saves messages in tx folder to receiving agents' rx file locations.
         """
+        
+        fps = []        
+        for msg_fp in os.listdir(self.msg_tx_fp):
+            with open(os.path.join(self.msg_tx_fp, msg_fp), "r") as file:
+                msg_content = file.read()
+                msg = msg_content.strip().split("|")
+                target_id = int(msg[1])
+                # Save message to target agent's rx folder
+                target_rx_fp = os.path.join(self.messaging_fp, f"agent_{target_id}_rx", msg_fp)
+                os.makedirs(os.path.dirname(target_rx_fp), exist_ok=True)
+                with open(target_rx_fp, "w") as target_file:
+                    target_file.write(msg_content)
+            
+            fps.append(msg_fp)
+        
+        for msg_fp in fps:
+            # Move sent message to done folder, overwrite if exists
+            done_fp = os.path.join(self.msg_tx_done_fp, msg_fp)
+            if os.path.exists(done_fp):
+                os.remove(done_fp)
+            os.rename(os.path.join(self.msg_tx_fp, msg_fp), done_fp)
+        
+
+    
+    def process_messages(self, msg_type, msg):
         
         fps = []        
         for msg_fp in os.listdir(self.msg_tx_fp):
@@ -223,14 +267,15 @@ class HardwareAgent():
             if self.my_id == msg_tuple[0]:
                 self.my_specializations = msg_tuple[1]
         elif "obs_vec" == msg_type:
-                # msg = (msg_type, obs_vec)
-                obs_vec = msg_tuple[0]
-                self._update_env_cell(obs_vec)
-                
-                if self.my_id == 0:
-                    # Show mothership cell status
-                    for pos, features in self.scaled_obs["cells"].items():
-                        print(f"Cell feats at {pos}: {features}")
+            # msg = (msg_type, obs_vec)
+            obs_vec = msg_tuple[0]
+            self._update_env_cell(obs_vec)
+            
+            if self.my_id == 0:
+                # Show mothership cell status
+                for pos, features in self.scaled_obs["cells"].items():
+                    print(f"Cell feats at {pos}: {features}")
+            
                 
                 
     def _update_env_cell(self, obs_vec):

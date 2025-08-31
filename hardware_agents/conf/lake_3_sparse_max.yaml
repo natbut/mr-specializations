@@ -1,24 +1,23 @@
 
 # Approx 118m from tip to tip
 env_lat_min: 44.120823
-env_lat_max: 44.120000 #120298
-env_lon_min: -123.308685
-env_lon_max: -123.306000 #307915
+env_lat_max: 44.120298
+env_lon_min: -123.308682
+env_lon_max: -123.307915
 
 mothership_lat: 44.120789
 mothership_lon: -123.308536
 mothership_loc_latlon: [44.120789, -123.308536]
 
+sparse: True
+action_max: True
+
 task_locs_latlon:
-# near
-- [44.120768, -123.308603]
-- [44.120714, -123.308465] # this one
-- [44.120779, -123.308303]
-# far
-# - [44.120568, -123.30806] # far right
-# - [44.120368, -123.3085] # bottom left far
-# - [44.120479, -123.3083]
-- [44.12045, -123.3081] # far middle
+- [44.120714, -123.308465]
+- [44.120648, -123.308374]
+- [44.120582, -123.308282]
+- [44.120516, -123.308191]
+- [44.12045, -123.3081]
 
 obstacles_locs_latlon:
 - [44.120822, -123.308534]
@@ -40,11 +39,11 @@ sampling_pts: 100
 plan_goal_samp_freq: 3
 plan_step_size: 0.15
 
-model_conf_fp: "conf\\models\\mat_2_3_2.yaml"
-model_weights_fp: "conf\\models\\best_2_3_2.pt"
-scenario_conf_fp: "..\\conf\\scenarios\\comms_5.yaml"
+model_conf_fp: "conf\\models\\mat_2_3_5.yaml"
+model_weights_fp: "conf\\models\\best_2_3_5_sparse.pt"
+scenario_conf_fp: "..\\conf\\scenarios\\comms_5_sparse.yaml"
 env_conf_fp:  "..\\conf\\envs\\planning_env_explore_5.yaml"
 
 messaging_fp: "msg\\"
-plans_fp: "plans_lake2\\"
-logs_fp: "logs_lake2\\"
+plans_fp: "plans_lake3\\"
+logs_fp: "logs_lake3\\"

@@ -1,9 +1,9 @@
 
 # Approx 118m from tip to tip
-env_lat_min: 44.120823
+env_lat_min: 44.120875
 env_lat_max: 44.120000 #120298
 env_lon_min: -123.308685
-env_lon_max: -123.306000 #307915
+env_lon_max: -123.306500 #307915
 
 mothership_lat: 44.120789
 mothership_lon: -123.308536
@@ -11,7 +11,7 @@ mothership_loc_latlon: [44.120789, -123.308536]
 
 task_locs_latlon:
 # near
-- [44.120768, -123.308603]
+- [44.120768, -123.30863]
 - [44.120714, -123.308465] # this one
 - [44.120779, -123.308303]
 # far

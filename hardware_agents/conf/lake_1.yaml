@@ -7,6 +7,7 @@ env_lon_max: -123.307915
 
 mothership_lat: 44.120789
 mothership_lon: -123.308536
+mothership_loc_latlon: [44.120789, -123.308536]
 
 task_locs_latlon:
 - [44.120768, -123.308603]
@@ -40,3 +41,4 @@ env_conf_fp:  "..\\conf\\envs\\planning_env_explore_5.yaml"
 
 messaging_fp: "msg\\"
 logs_fp: "logs\\"
+plans_fp: "plans\\"
