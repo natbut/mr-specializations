@@ -1,0 +1,17 @@
+
+num_envs: 8
+
+max_steps: 1024
+macro_step: 128
+horizon: 0.25
+planning_pts: 30
+
+heuristic_fns:
+- nearest_task
+- nearest_agent
+- nearest_frontier
+- nearest_comms_midpt
+- neediest_comms_midpt
+- goto_base
+
+render: False

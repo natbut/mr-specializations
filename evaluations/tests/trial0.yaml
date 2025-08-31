@@ -1,0 +1,16 @@
+
+agent_assignments:
+- WORKER
+- WORKER
+- SUPPORT
+- SUPPORT
+
+num_runs: 50 # 50
+
+rollout_steps: 8 # 8
+
+planning_iters: 1
+
+create_gifs: False
+
+# predefined tasks 

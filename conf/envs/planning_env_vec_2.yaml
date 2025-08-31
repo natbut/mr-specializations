@@ -1,0 +1,10 @@
+
+num_envs: 8
+
+max_steps: 240
+horizon: 80
+
+connectivity: 4
+node_dim: 4
+
+render: False

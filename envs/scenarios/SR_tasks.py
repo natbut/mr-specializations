@@ -46,7 +46,7 @@ class Scenario(BaseScenario):
         self.plot_grid = False  # You can use this to plot a grid under the rendering for visualization purposes
 
         self.n_agents_holonomic = kwargs.pop(
-            "n_agents_holonomic", 1
+            "n_agents_holonomic", 2
         )  # Number of agents with holonomic dynamics
         self.n_agents_diff_drive = kwargs.pop(
             "n_agents_diff_drive", 0
@@ -88,28 +88,30 @@ class Scenario(BaseScenario):
         )  # Whether the agents get a global or local reward for going to their goals
         
         self.task_comp_range = kwargs.pop(
-            "task_comp_range", 0.25
+            "task_comp_range", 0.4
         )
         self.tasks_respawn = kwargs.pop(
             "tasks_respawn", False
         )
         self.complete_task_coeff = kwargs.pop(
-            "task_reward", 1
+            "task_reward", 0.1
         )
         self.time_penalty = kwargs.pop(
-            "time_penalty", -0.1
+            "time_penalty", -0.11
         )
 
         self.agent_radius = kwargs.pop(
-            "agent_radius", 0.1
+            "agent_radius", 0.05
             )
         
         self.min_distance_between_entities = (
-            self.agent_radius * 4 + 0.05
+            self.task_comp_range #self.agent_radius * 4 + 0.05
         )  # Minimum distance between entities at spawning time
         self.min_collision_distance = (
             0.005  # Minimum distance between entities for collision trigger
         )
+
+        self.num_feats = self.n_tasks + self.n_agents + self.n_obstacles
 
         ScenarioUtils.check_kwargs_consumed(kwargs) # Warn is not all kwargs have been consumed
 
@@ -153,12 +155,12 @@ class Scenario(BaseScenario):
 
         self.agents = []
         for i in range(self.n_agents):
-            color = self.agent_color
-            # color = (
-            #     known_colors[i]
-            #     if i < len(known_colors)
-            #     else colors[i - len(known_colors)]
-            # )  # Get color for agent
+            # color = self.agent_color
+            color = (
+                known_colors[i]
+                if i < len(known_colors)
+                else colors[i - len(known_colors)]
+            )  # Get color for agent
 
             sensors = [
                 Lidar(
@@ -186,6 +188,7 @@ class Scenario(BaseScenario):
                     u_multiplier=[3, 3],  # Action multipliers
                     dynamics=Holonomic(),  # If you go to its class you can see it has 2 actions: force_x, and force_y
                 )
+                
             elif i < self.n_agents_holonomic + self.n_agents_diff_drive:
                 agent = PlanningAgent(
                     name=f"diff_drive_{i - self.n_agents_holonomic}",
@@ -232,7 +235,7 @@ class Scenario(BaseScenario):
         ################
         self.tasks = []
         for i in range(self.n_tasks):
-            color = self.task_color
+            color = known_colors[i] #self.task_color
             task = Landmark(
                 name=f"goal_{i}",
                 collide=False,
@@ -368,7 +371,7 @@ class Scenario(BaseScenario):
                         x_bounds=(-self.world.x_semidim, self.world.x_semidim),
                         y_bounds=(-self.world.y_semidim, self.world.y_semidim),
                     )
-
+                    print("POS:", pos)
                     task.state.pos[self.completed_tasks[:, i]] = pos[
                         self.completed_tasks[:, i]
                     ].squeeze(1)
@@ -379,11 +382,15 @@ class Scenario(BaseScenario):
             #             None
             #         )[self.completed_tasks[:, i]]
 
+
+        # TODO: TRY GIVING AGENTS MORE REWARD IF ALL TASKS ARE COVERED
         tasks_reward = (
             self.shared_tasks_rew if self.shared_rew else agent.tasks_rew
         )  # Choose global or local reward based on configuration
 
-        return tasks_reward + self.time_rew
+        rews = tasks_reward + self.time_rew
+
+        return rews.unsqueeze(-1) # [B,1]
     
     def agent_tasks_reward(self, agent):
         """Reward for covering targets"""
@@ -440,7 +447,9 @@ class Scenario(BaseScenario):
 
     def done(self) -> Tensor:
         # print("Completed tasks:", self.completed_tasks)
-        return self.completed_tasks.any(dim=-1) #self.all_goal_reached
+        # return self.completed_tasks.all(dim=-1) #self.all_goal_reached
+        return torch.full(
+            (self.world.batch_dim,), False, device=self.world.device)
 
     def info(self, agent: Agent) -> Dict[str, Tensor]:
         return {

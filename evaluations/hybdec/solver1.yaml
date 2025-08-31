@@ -1,0 +1,66 @@
+# SOLVER PARAMS
+
+# Dec-MCTS
+planning_iters: 50  # dec-mcts planning iters
+t_max_decMCTS: 10
+comm_n: 5  # Number of Action Sequences to communicate/store in distr
+failure_probability: 0.1  # for stoch analysis of routes
+sim_iters: 10
+
+# Sim-BRVNS
+alpha: 0.85 # (0,1), depending on reward heterogeneity (0 for high heter, 1 for low)
+beta: 0.3  # (0,1), controls greediness in constructive heuristic
+k_initial: 1
+k_max: 10
+t_max_simBRVNS: 10  # Maximum execution time
+t_max_init: 30
+exploratory_mcs_iters: 10
+intensive_mcs_iters: 100
+act_samples: 1
+
+# Merger
+mcs_iters: 50
+rel_mod: 0.00
+rel_thresh: 0.0
+
+
+# PROBLEM PARAMETERS
+
+xCoordRange:
+  - -1
+  - 1
+yCoordRange:
+  - -1
+  - 1
+zCoordRange:
+  - 0
+  - 0
+
+base_loc:
+  - 0
+  - 0
+  - 0
+
+reward_range:
+  - 1 # min
+  - 1 # max
+work_range:
+  - 0 # min
+  - 0 # max
+c: 0.75  # variance modifier (0.05=low, 0.25=med, 0.75=high)
+start: 'vr'
+end: 'vg'
+rob_task: "vr"
+
+m_id: -1
+
+basic: True
+
+
+# PASSENGER PARAMETERS
+
+num_workers: 2 # Portion of total num robots from scenario config
+
+budget: 100 #Wh (robot energy)
+energy_burn_rate: 0.1 # Wh / (m/s)
+velocity: 1 #m/timeUnit

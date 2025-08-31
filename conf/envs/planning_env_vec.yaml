@@ -1,8 +1,8 @@
 
-num_envs: 3
+num_envs: 8
 
 max_steps: 500
-horizon: 20
+horizon: 60
 
 connectivity: 4
 node_dim: 4

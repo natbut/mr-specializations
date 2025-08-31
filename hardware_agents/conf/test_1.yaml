@@ -1,0 +1,42 @@
+
+# Approx 118m from tip to tip
+env_lat_min: 44.120731
+env_lat_max: 44.12003
+env_lon_min: -123.309093
+env_lon_max: -123.307175
+
+mothership_lat: 44.120596
+mothership_lon: -123.308542
+
+task_locs_latlon:
+- [44.120606, -123.308786]
+- [44.120400, -123.308542]
+- [44.120487, -123.30801]
+
+obstacles_locs_latlon:
+- [44.120706, -123.3075]
+- [44.1202, -123.3086]
+
+num_passengers: 2
+
+heuristic_fns:
+- nearest_task
+- nearest_agent
+- nearest_frontier
+- nearest_comms_midpt
+- neediest_comms_midpt
+- goto_base
+
+
+plan_horizon: 0.5
+sampling_pts: 100
+plan_goal_samp_freq: 3
+plan_step_size: 0.15
+
+model_conf_fp: "conf\\models\\mat_2_3_2.yaml"
+model_weights_fp: "conf\\models\\best_2_3_2.pt"
+scenario_conf_fp: "..\\conf\\scenarios\\comms_5.yaml"
+env_conf_fp:  "..\\conf\\envs\\planning_env_explore_5.yaml"
+
+messaging_fp: "msg\\"
+logs_fp: "logs\\"

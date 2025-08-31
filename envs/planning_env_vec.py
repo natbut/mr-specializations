@@ -1,13 +1,24 @@
+import time
+from typing import Dict, Tuple
+
 import torch
-from torchrl.envs import EnvBase
-from torchrl.data import Unbounded, Composite, Bounded
-from torch_geometric.data import Data, Batch  # For Graph Representation
 from tensordict.tensordict import TensorDict
-
-from vmas.simulator.scenario import BaseScenario
+from torchrl.data import Bounded, Composite, Unbounded
+from torchrl.envs import EnvBase
 from vmas import make_env
-from typing import Tuple, Dict
+from vmas.simulator.scenario import BaseScenario
 
+import envs.heuristics
+
+from moviepy import ImageSequenceClip
+import os
+
+def load_func(dotpath : str):
+    """ load function in module.  function is right-most segment """
+    func = dotpath #dotpath.rsplit(".", maxsplit=1)
+    m = envs.heuristics #(module_)
+    # print("Func:", func, "m:", m)
+    return getattr(m, func)
 
 class VMASPlanningEnv(EnvBase):
     def __init__(
@@ -19,142 +30,115 @@ class VMASPlanningEnv(EnvBase):
         
         self.scenario = scenario
 
+        self.heuristic_eval_fns_names = env_kwargs.pop("heuristic_fns", None)
+        self.set_heuristic_eval_fns(self.heuristic_eval_fns_names)
         self.num_envs = env_kwargs.pop("num_envs", 1)
-        self.horizon = env_kwargs.pop("horizon", 10)  # Number of steps to execute per trajectory 
-        self.node_dim = env_kwargs.pop("node_dim", 4)
-        self.connectivity = env_kwargs.pop("connectivity", 4)
-        self.render = env_kwargs.pop("render", False)
+        self.horizon = env_kwargs.pop("horizon", 0.25)
+        self.planning_pts = env_kwargs.pop("planning_pts", 30)
+        self.macro_step = env_kwargs.pop("macro_step", 10) # Number of sub-steps to execute per step 
 
-        self.graph_batch = None
-        self.sim_obs = None
+        self.render = env_kwargs.pop("render", False)
+        self.log_rollout=False
+        self.log_fp = None
+        self.log_file = None
+        self.use_softmax = False
+        self.use_max = False
+
         self.render_fp = None
         self.count = 0
+        self.stored_tasks = []
 
-        n_features = self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
+        super().__init__(batch_size=[self.num_envs], device=device)
+        # VMAS Environment Configuration
+        self.sim_env = make_env(
+                            scenario=self.scenario,
+                            num_envs=self.batch_size[0],
+                            max_steps=env_kwargs.pop("max_steps", 100),
+                            device=self.device,
+                            **scenario_kwargs,
+                            )
+    
+        n_features = self.scenario.num_feats #self.scenario.n_agents + self.scenario.n_tasks + self.scenario.n_obstacles
 
-        # TODO Check kwargs passing
-        if self.num_envs == 1:
-            super().__init__(batch_size=[], device=device)
-            # VMAS Environment Configuration
-            self.sim_env = make_env(
-                                scenario=self.scenario,
-                                num_envs=1,
-                                max_steps=env_kwargs.pop("max_steps", 100),
-                                device=self.device,
-                                **scenario_kwargs,
-                                )
+        # MAX_CELLS = 100
+
+        # Define Observation & Action Specs
+        self.observation_spec = Composite(
+            # obs=Composite(
+                cell_feats=Unbounded(
+                    shape=(self.num_envs, -1, n_features),
+                    dtype=torch.float64,
+                    device=device
+                    ),
+                cell_pos=Unbounded(
+                    shape=(self.num_envs, -1, 2),
+                    dtype=torch.float64,
+                    device=device
+                ),
+                num_cells=Unbounded(
+                    shape=(self.num_envs,),
+                    dtype=torch.float32,
+                    device=device
+                ),
+                rob_data=Unbounded(
+                    shape=(self.num_envs, -1, 3), # (self.num_envs, self.sim_env.n_agents, 3)
+                    dtype=torch.float64,
+                    device=device
+                ),
+                num_robs=Unbounded(
+                    shape=(self.num_envs,),
+                    dtype=torch.float32,
+                    device=device
+                ),
+            #     device=device
+            # ),
+            shape=(self.num_envs,),
+            device=device
+        )
+
+        self.action_spec = Bounded(
+            low=-torch.ones((
+                            self.num_envs,
+                            self.sim_env.n_agents * self.n_heuristics
+                            ),
+                            device=device
+                            ),
+            high=torch.ones((
+                            self.num_envs,
+                            self.sim_env.n_agents * self.n_heuristics
+                            ),
+                            device=device
+                            ),
+            shape=(self.num_envs, self.sim_env.n_agents * self.n_heuristics),
+            device=device
+        ) # NOTE ADDED TO HAVE ALL ROBOTS AS ONE TRANSFORMER ACTION
+
+        self.reward_spec = Unbounded(
+            shape=(self.num_envs, 1),
+            device=device
+            )
             
-            # Define Observation & Action Specs
-            self.observation_spec = Composite(
-                obs=Composite(
-                    cell_feats=Unbounded(
-                        shape=(self.node_dim**2, n_features),
-                        dtype=torch.float64,
-                        device=device
-                        ),
-                    cell_pos=Unbounded(
-                        shape=(self.node_dim**2, 2),
-                        dtype=torch.float64,
-                        device=device
-                    ),
-                    rob_pos=Unbounded(
-                        shape=(self.sim_env.n_agents, 2),
-                        dtype=torch.float64,
-                        device=device
-                    ),
-                    device=device
-                ),
-                shape=(1,),
-                device=device
-            )
+        self.steps = 0
 
-            self.action_spec = Bounded(
-                low=-torch.ones((
-                                self.sim_env.n_agents,
-                                n_features
-                                ),
-                                device=device
-                                ),
-                high=torch.ones((
-                                self.sim_env.n_agents,
-                                n_features
-                                ),
-                                device=device
-                                ),
-                shape=(self.sim_env.n_agents, n_features), # self.node_dim**2, 
-                device=device
-            )
+    def set_heuristic_eval_fns(self, fns: list):
+        """Temporarily set eval fns to those provided"""
+        self.heuristic_eval_fns = [load_func(name) for name in fns]
+        self.n_heuristics = len(self.heuristic_eval_fns)
 
-            self.reward_spec = Unbounded(
-                shape=(1,), #(self.sim_env.n_agents),
-                device=device
-                )#, self.scenario.n_agents))
-
-        else:
-            super().__init__(batch_size=[self.num_envs], device=device)
-            # VMAS Environment Configuration
-            self.sim_env = make_env(
-                                scenario=self.scenario,
-                                num_envs=self.batch_size[0],
-                                max_steps=env_kwargs.pop("max_steps", 100),
-                                device=self.device,
-                                **scenario_kwargs,
-                                )
-
-            # Define Observation & Action Specs
-            self.observation_spec = Composite(
-                obs=Composite(
-                    cell_feats=Unbounded(
-                        shape=(self.num_envs, self.node_dim**2, n_features),
-                        dtype=torch.float64,
-                        device=device
-                        ),
-                    cell_pos=Unbounded(
-                        shape=(self.num_envs, self.node_dim**2, 2),
-                        dtype=torch.float64,
-                        device=device
-                    ),
-                    rob_pos=Unbounded(
-                        shape=(self.num_envs, self.sim_env.n_agents, 2),
-                        dtype=torch.float64,
-                        device=device
-                    ),
-                    device=device
-                ),
-                shape=(self.num_envs,),
-                device=device
-            )
-
-            self.action_spec = Bounded(
-                low=-torch.ones((
-                                self.num_envs,
-                                self.sim_env.n_agents,
-                                n_features
-                                ),
-                                device=device
-                                ),
-                high=torch.ones((
-                                self.num_envs,
-                                self.sim_env.n_agents,
-                                n_features
-                                ),
-                                device=device
-                                ),
-                shape=(self.num_envs, self.sim_env.n_agents, n_features),
-                device=device
-            )
-
-            self.reward_spec = Unbounded(
-                shape=(self.num_envs, 1),
-                device=device
-                )
+    def reset_heuristic_eval_fns(self):
+        """Reset eval fns to stored fns"""
+        self.heuristic_eval_fns = [load_func(name) for name in self.heuristic_eval_fns_names]
+        self.n_heuristics = len(self.heuristic_eval_fns)
 
     def _reset(self, obs_tensordict=None) -> TensorDict:
         """Reset all VMAS worlds and return initial state."""
-        self.sim_obs = self.sim_env.reset()
-        self._build_obs_graph(node_dim=self.node_dim)
-        obs = TensorDict({"obs": self.graph_obs},
-                         device=self.device)
+        sim_obs = self.sim_env.reset() # Gets global obs from agent 0
+
+        self.steps = 0
+
+        # print("STEP SIM OBS:", sim_obs[0])
+        obs = TensorDict(sim_obs[0], batch_size=self.batch_size, device=self.device)
+        
         # out.set("step_count", torch.full(self.batch_size, 1))
         # print("Reset TDict:", obs)
         # print("Expanded:", [(x_i, edges_i) for x_i, edges_i in zip(self.graph_obs["x"], self.graph_obs["edge_index"])])
@@ -167,30 +151,111 @@ class VMASPlanningEnv(EnvBase):
         2. Execute the trajectories for the given horizon.
         3. Return next state, rewards, and termination status.
         """
+
+        if self.log_rollout and self.steps == 0:
+            log_path = self.log_fp + "_rollout_log.csv"
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            log_file = open(self.log_fp + "_rollout_log.csv", "w")
+            log_file.write("rollout,step,entity_type,entity_id,x,y\n")
+            # Log fixed entities (bases and obstacles)
+            base = self.sim_env.scenario.base.state.pos.tolist()[0]
+            print("Base:", base)
+            log_file.write(f"0,0,base,0,{base[0]},{base[1]}\n")
+            for i, obstacle in enumerate(self.sim_env.scenario.obstacles):
+                obs = obstacle.state.pos.tolist()[0]
+                print("Obstacle:", obs)
+                log_file.write(f"0,0,obstacle,{i},{obs[0]},{obs[1]}\n")
+
+            log_file.close()
+
         # Process actions (heuristic weights)
-        # heuristic_weights = actions.view(self.batch_size, self.scenario.n_agents, self.scenario.n_tasks)
-        heuristic_weights = actions["action"] # NOTE THESE ARE WEIGHTS FOR EVERY NODE, BUT WE ONLY USE AGENT LOCS
+        heuristic_weights = actions["action"] 
+        heuristic_weights = heuristic_weights.view(
+            heuristic_weights.shape[0],
+            self.sim_env.n_agents,
+            len(self.heuristic_eval_fns)
+        ) # Breaks weights apart per-robot
+        if self.use_softmax:
+            heuristic_weights = torch.softmax(heuristic_weights, dim=-1)
+        if self.use_max:
+            # Set the max value in each H vector to 1, others to 0
+            max_indices = torch.argmax(heuristic_weights, dim=-1, keepdim=True)
+            heuristic_weights = torch.zeros_like(heuristic_weights)
+            heuristic_weights.scatter_(-1, max_indices, 1.0)
+            # print("Using max action selection; weights are:", heuristic_weights)
         if self.render:
-            print(f"\nHeuristic Weights:\n {heuristic_weights} Shape: {heuristic_weights.shape}")
+            print(f"\nHeuristic Weights:\n {heuristic_weights} Shape: {heuristic_weights.shape}") # [B, N_AGENTS, N_FEATS]
+        # print("WEIGHTS SAMPLE:", heuristic_weights[:5], "shape:", heuristic_weights.shape)
+        # print("AGENTS:", self.sim_env.scenario.agents, "shape:", len(self.sim_env.agents))
+
+        # Log heuristic weights
+        if self.log_rollout:
+            log_file = open(self.log_fp+"_rollout_log.csv", "a")
+            for i, weights in enumerate(heuristic_weights.tolist()[0]):
+                log_file.write(f"{self.steps},0,weights,{i},{weights[0]},{weights[1]},{weights[2]},{weights[3]},{weights[4]},{weights[5]}\n")
+            log_file.close()
+
+        # Log task positions
+        if self.log_rollout:
+            log_file = open(self.log_fp+"_rollout_log.csv", "a")
+            for i, task in enumerate(self.sim_env.scenario.tasks):
+                task = task.state.pos.tolist()[0]
+                if task[0] < 2.0 and task not in self.stored_tasks:
+                    log_file.write(f"{self.steps},{0},task,{i},{task[0]},{task[1]}\n")
+                    self.stored_tasks.append(task)
+            log_file.close()
+
 
         # Execute and aggregate rewards
-        rewards = torch.zeros((1,), device=self.device)
+        rewards = torch.zeros((self.num_envs, 1), device=self.device)
+        # dones = torch.full((self.num_envs, 1), False, device=self.device)
+        # null_rews = torch.zeros_like(rewards, device=self.device)
         frame_list = []
-        # Update planning graph (assuming env is dynamic)
-        self._build_obs_graph(node_dim=self.node_dim) # TODO for more dynamic envs, update this more frequently (in below loop)
         for agent in self.sim_env.agents: # Reset agent trajectories
             agent.trajs = []
-        for t in range(self.horizon):
+        # print("\n= Pre-rollout step! =")
+
+        # print("Active agents:", [a.is_active for a in self.sim_env.agents])
+        for t in range(self.macro_step):
             verbose = False
-            # if t == 0: verbose = True
             # Compute agent trajectories & get actions
             u_action = []
-            for i, agent in enumerate(self.sim_env.agents):
-                u_action.append(agent.get_control_action(self.graph_batch, heuristic_weights[i], self.horizon-t, verbose)) # get next actions from agent controllers
-            # print("U-ACTION:", u_action)
-            self.sim_obs, rews, dones, info = self.sim_env.step(u_action)
-            # print("Rewards:", rewards, "rews:", rews, "sum:", torch.sum(torch.stack(rews)))
-            rewards += torch.sum(torch.stack(rews))
+            # t_start = time.time()
+            i = 0
+            for agent in self.sim_env.agents:
+                if agent.is_active:
+                    u_action.append(agent.get_control_action_cont(heuristic_weights[:,i,:], self.heuristic_eval_fns, self.horizon, self.planning_pts, verbose
+                                                                )) # get next actions from agent controllers
+                    i += 1
+                else:
+                    u_action.append(agent.null_action)
+
+            # LOG AGENT TRAJECTORIES
+            if self.log_rollout:
+                log_file = open(self.log_fp+"_rollout_log.csv", "a")
+                for id, agent in enumerate(self.sim_env.agents):
+                    if agent.is_active and agent.trajs:
+                        for i, traj in enumerate(agent.trajs):
+                            # Check if a new trajectory has been generated
+                            # Compare trajectories using torch.equal for tensors
+                            if not hasattr(agent, 'last_logged_traj') or len(agent.last_logged_traj) <= i or not torch.equal(torch.stack(agent.last_logged_traj[i]), torch.stack(traj)):
+                                for waypoint_idx, waypoint in enumerate(traj):
+                                    wp = waypoint.tolist()
+                                    log_file.write(f"{self.steps},{t},agent_{id}_traj_{i},{waypoint_idx},{wp[0]},{wp[1]}\n")
+                                
+                                # Update the last logged trajectory
+                                if not hasattr(agent, 'last_logged_traj'):
+                                    agent.last_logged_traj = [[] for _ in range(self.num_envs)]
+                                agent.last_logged_traj[i] = traj
+                log_file.close()
+    
+            # BURST TASK SPAWNING (ONLY ON LAST STEP)
+            if t == self.macro_step-1 and self.sim_env.scenario.spawn_tasks_burst:
+                self.sim_env.scenario.spawn_tasks(attempts=self.macro_step)
+            sim_obs, rews, dones, _ = self.sim_env.step(u_action)
+
+            team_rews = torch.stack(rews).sum(dim=0)
+            rewards += team_rews #torch.where(dones == False, team_rews, null_rews)
 
             if self.render:
                 frame = self.sim_env.render(
@@ -200,18 +265,23 @@ class VMASPlanningEnv(EnvBase):
                 frame_list.append(frame)
 
             if dones.any():
-                break
+                # print("Step", self.steps, "\nRETURNED DONES:", dones.unsqueeze(-1), "\nAccumulated rewards:", rewards)
+                break 
             
         if self.render:
-            from moviepy import ImageSequenceClip
             fps = 20
             clip = ImageSequenceClip(frame_list, fps=fps)
             clip.write_gif(f"{self.render_fp}_{self.count}.gif", fps=fps)
             self.count += 1
 
+
+        # print("Rewards:", rewards, "\nDones:", dones.unsqueeze(1))
+        
+        # print("STEP SIM OBS:", sim_obs[0])
+
         # Construct next state representation   
         next_state = TensorDict(
-            {"obs": self.graph_obs},
+            sim_obs[0], # Global obs taken from first agent (any will do)
             device=self.device,
         )
         rew_tdict = TensorDict(
@@ -219,7 +289,7 @@ class VMASPlanningEnv(EnvBase):
             device=self.device,
         )
         done_tdict = TensorDict(
-            {"done": self.scenario.done()},
+            {"done": dones.unsqueeze(1)},
             device=self.device,
         )
 
@@ -228,120 +298,14 @@ class VMASPlanningEnv(EnvBase):
         # Should return next_state, rewards, done as tensordict
         next_state.update(rew_tdict).update(done_tdict) 
         # print("Next TDict:\n", next_state)
+        
+        # print("= Post-rollout step! = ")
+        self.steps += 1
+
         return next_state #, rewards, done, {}
 
     
     def _set_seed(self, seed: int) -> None:
         """Set random seed for reproducibility."""
         torch.manual_seed(seed)
-
-
-    def _build_obs_graph(self,
-                         node_dim=2,
-                         connectivity=4,
-                         verbose=False
-                         ) -> Batch:
-        """
-        Discretize type & pos based observations into a planning graph.
-        Obs should be dict with "env_dims": (x, y), "NAME": (x,y), ...
-        """
-        global_obs_dict = self.sim_obs[0] # each entry is num_envs x entry_size
-        if verbose: print(f"BuildGraph Obs:\n {global_obs_dict}") # NOTE only need 1 obs if global
-
-        all_graphs = []
-        for i in range(self.num_envs):
-            # Dynamically compute node_rad to allow fixed graph topology for varying problem sizes
-            element_positions = []
-            for key in global_obs_dict:
-                if "obs" in key:
-                    for entity in global_obs_dict[key]:
-                        element_positions.append(entity.squeeze(0))
-            # print([global_obs_dict[key] for key in global_obs_dict if "obs" in key])
-            # element_positions = torch.cat([el[i] for el in [global_obs_dict[key] for key in global_obs_dict if "obs" in key]])
-            # print("el pos", torch.stack(element_positions))
-            element_positions = torch.stack(element_positions)
-            min_dims = torch.min(element_positions, dim=0).values
-            max_dims = torch.max(element_positions, dim=0).values
-
-            cell_dim = 1.001*((max_dims - min_dims)/node_dim) #torch.max
-            
-            if verbose: print("Element Positions", element_positions, "Max/Min:", max_dims, min_dims, "Cell Dim:", cell_dim)
-
-            # Create a grid of node centers
-            node_positions = []
-            node_indices = {}
-            index = 0
-            for x_idx in range(node_dim):
-                for y_idx in range(node_dim):
-                    node_pos = min_dims + cell_dim*(torch.tensor((x_idx+0.5, y_idx+0.5), device=self.device))
-                    node_positions.append(node_pos.squeeze(0))
-                    node_indices[(x_idx, y_idx)] = index
-                    index += 1
-            
-            num_nodes = len(node_positions)
-            node_positions = torch.stack(node_positions)
-            
-            if verbose: print(f"Env Node positions: \n{node_positions} \nEnv Node Indices: {node_indices}")
-
-            # Compute binary feature vectors using square-shaped cells
-            features = torch.zeros((num_nodes, len(element_positions)), dtype=torch.float32, device=self.device)  # [agent_presence, task_presence, obstacle_presence]
-            
-            for j, feature_pos in enumerate(element_positions):
-                for k, node_pos in enumerate(node_positions):
-                    # Check if the feature is within the square cell centered at the node
-                    within_x = torch.abs(feature_pos[0] - node_pos[0]) <= cell_dim[0] / 2
-                    within_y = torch.abs(feature_pos[1] - node_pos[1]) <= cell_dim[1] / 2
-                    if within_x and within_y:
-                        if verbose:
-                            print(f"Feature {feature_pos} within square cell of node {k}: {node_pos}")
-                        features[k, j] = 1
-
-            if verbose: print("Node features:\n", features)
-
-            # Compute edge adjacency list & attributes (4-way or 8-way connectivity)
-            edge_list = []
-            edge_attrs = []  # To store distances between connected nodes
-            for (x_idx, y_idx), node_id in node_indices.items():
-                neighbors = []
-                if connectivity == 4:
-                    neighbors = [(x_idx-1, y_idx), (x_idx+1, y_idx), (x_idx, y_idx-1), (x_idx, y_idx+1)]
-                elif connectivity == 8:
-                    neighbors = [(x_idx-1, y_idx-1), (x_idx-1, y_idx), (x_idx-1, y_idx+1),
-                                (x_idx, y_idx-1), (x_idx, y_idx+1),
-                                (x_idx+1, y_idx-1), (x_idx+1, y_idx), (x_idx+1, y_idx+1)]
-                
-                for neighbor in neighbors:
-                    if neighbor in node_indices:
-                        neighbor_id = node_indices[neighbor]
-                        edge_list.append((node_id, neighbor_id))
-                        # Compute distance between nodes
-                        dist = torch.norm(node_positions[node_id] - node_positions[neighbor_id])
-                        edge_attrs.append(dist)
-
-            edge_index = torch.tensor(edge_list, dtype=torch.int64, device=self.device).T  # Shape [2, num_edges] (COO)
-            edge_attrs = torch.tensor(edge_attrs, device=self.device)  # Shape [num_edges]
-            if verbose: print("Edge index:\n", edge_index)
-            if verbose: print("Edge attributes (distances):\n", edge_attrs)
-
-            # Create a graph for this environment
-            graph = Data(x=features, edge_index=edge_index, edge_attr=edge_attrs, pos=node_positions).to(self.device)
-            # x_vec.append(features)
-            # edge_index_vec.append(edge_index)
-            # edge_attr_vec.append(edge_attrs)
-            # pos_vec.append(node_pos)
-
-            # print("\n!!! ROB POS:", self.sim_obs[0]["obs_agents"].squeeze(1), "Shape:", self.sim_obs[0]["obs_agents"].squeeze(1).shape)
-            all_graphs.append(graph)
-
-        # batched_graph = Batch.from_data_list(all_graphs)
-
-        self.graph_obs = {
-            "cell_feats": torch.stack([g["x"] for g in all_graphs]),
-            "cell_pos": torch.stack([g["pos"] for g in all_graphs]),
-            "rob_pos": self.sim_obs[0]["obs_agents"].squeeze(1), # TODO Sequeeze needed for vectorized env?
-            # "edge_attr": torch.stack([g["edge_attr"] for g in all_graphs]),
-            # "pos": torch.stack([g["pos"] for g in all_graphs]),
-            # "batch": batched_graph.batch,
-        }
-
-        return graph
+        self.sim_env.seed(seed)

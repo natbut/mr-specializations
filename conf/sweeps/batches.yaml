@@ -1,0 +1,21 @@
+
+lr:
+  values: [0.001]
+max_grad_norm:
+  values: [1.0]
+frames_per_batch:
+  values: [1024, 2048, 4096]
+total_frames:
+  values: [500000]
+sub_batch_size:
+  values: [64, 128, 256]
+num_epochs:
+  values: [32]
+clip_epsilon:
+  values: [0.2]
+gamma:
+  values: [0.99]
+lmbda:
+  values: [0.95]
+entropy_eps:
+  values: [0.01]

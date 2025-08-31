@@ -1,49 +1,36 @@
 
 import torch
-from torchrl.data import CompositeSpec, BoundedTensorSpec, Unbounded
-
-from envs.scenarios.SR_tasks import Scenario
-from envs.planning_env_vec import VMASPlanningEnv
 from tensordict.tensordict import TensorDict
-from torchrl.envs import (
-    Compose,
-    DoubleToFloat,
-    ObservationNorm,
-    StepCounter,
-    TransformedEnv,
-    EnvBase
-)
+
+from envs.planning_env_vec import VMASPlanningEnv
+# from envs.scenarios.SR_tasks import Scenario
+from envs.scenarios.explore_comms_tasks import Scenario
+from experiment_vec import load_yaml_to_kwargs
 
 if __name__ == "__main__":
-    node_dim = 4
-    batch_size = None 
+    
+    scenario_configs = [
+        "conf/scenarios/comms_6.yaml",
+    ]
+    env_configs = [
+        "conf/envs/planning_env_explore_4.yaml",
+    ]
 
     env = VMASPlanningEnv(Scenario(),
-                                num_envs=batch_size,
-                                device="cuda",
-                                node_dim=node_dim
-                                )
-    
-    # env = TransformedEnv(
-    #     base_env,
-    #     Compose(
-    #         # normalize observations
-    #         ObservationNorm(in_keys=["x"]), # Change to "observation"
-    #         DoubleToFloat(),
-    #         StepCounter(),
-    #     ),
-    # )
-    
-    env.render = True
-    
-    # actions = torch.zeros((env.batch_size[0],
-    #                       env.scenario.n_agents,
-    #                       env.scenario.n_tasks + env.scenario.n_agents + env.scenario.n_obstacles),
-    #                       device="cuda"
-    #                       )  # Random actions
+                            device="cuda",
+                            env_kwargs=load_yaml_to_kwargs(env_configs[0]),
+                            scenario_kwargs=load_yaml_to_kwargs(scenario_configs[0])
+                            )
 
-    actions = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0], device="cuda")
-    # actions = torch.stack([actions for _ in range(2)])\
+    env.render = True
+
+    # act = [torch.stack([torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], device="cuda")]) for _ in range(8)]
+    actions = torch.tensor([0.1, 0.0001, 0.01, 0.0001, 0.0001, 0.0001], device="cuda")
+    actions = torch.cat([actions for _ in range(4)]) # cat for robots
+    # actions[0][0] = 1.0
+    # actions[1][3] = 1.0
+    # actions[2][2] = 1.0
+    actions = torch.stack([actions for _ in range(8)]) # stack for envs
     
     print("Actions:", actions)
     
@@ -51,12 +38,13 @@ if __name__ == "__main__":
     actions_tdict = TensorDict({"action": actions}, batch_size=env.batch_size)
     print("Actions:", actions_tdict)
 
-    obs_graph = env.reset()
-    print("OBS", obs_graph)
+    obs = env.reset()
+    print("OBS", obs)
     # print("\nReset Obs Graph:\n", obs_graph["graph"], "Num graphs:", obs_graph["graph"].num_graphs) #, "\n Graph 0:\n", obs_graph[0])
     # print("\nGraphs to Data list:\n", obs_graph["graph"].to_data_list())
 
-    for _ in range(6):
+    for i in range(8):
+        print("STEP", i)
         next_tdict= env.step(actions_tdict)
 
     print("ENV STEP RETURN:", next_tdict)

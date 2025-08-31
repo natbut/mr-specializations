@@ -1,50 +1,68 @@
-from experiment_vec import train_PPO
+# import cProfile
+# import pstats
+import sys
+
 # from experiment import train_PPO
-from envs.scenarios.SR_tasks import Scenario
+# from envs.scenarios.SR_tasks import Scenario
+from envs.scenarios.explore_comms_tasks import Scenario
+from experiment_vec import train
 
-
+# with cProfile.Profile() as pr:
 
 if __name__ == "__main__":
 
-    ### List test config files here ###
+    if len(sys.argv) < 6:
+        print("Usage: python train.py <scenario_fp> <env_fp> <algo_fp> <model_fp> <checkpt_fp> <wandb_mode> <project_name>")
+        sys.exit(1)
+
+    scenario_fp = sys.argv[1]
+    env_fp = sys.argv[2]
+    algo_fp = sys.argv[3]
+    model_fp = sys.argv[4]
+    checkpt_fp = sys.argv[5]
+    wandb_mode = sys.argv[6]
+    project_name = sys.argv[7]
 
     # Env, Scenario & params
     scenario = Scenario()  
-    scenario_configs = [
-        "conf/scenarios/SR_tasks.yaml",
-    ]
-    env_configs = [
-        "conf/envs/planning_env_vec.yaml",
-    ]
+    scenario_configs = [scenario_fp]
+        # "conf/scenarios/exploring_0.yaml", #SR_tasks_5.yaml",
+    # ]
+    env_configs = [env_fp]
+        # "conf/envs/planning_env_explore_1.yaml", #planning_env_vec_4.yaml",
+    # ]
 
     # RL Hyperparams
-    rl_configs = [
-        "conf/algos/ppo_2_2.yaml",
-    ]
+    rl_configs = [algo_fp]
+        # "conf/algos/ppo_4_0.yaml",
+    # ]
 
     # Model Params
-    model_configs = [
-        "conf/models/mat_1.yaml",
-    ]
+    model_configs = [model_fp]
+        # "conf/models/mat_9.yaml",
+    # ]
 
+    # Checkpoint
+    checkpoint = [checkpt_fp]
+    if checkpt_fp == "None":
+        checkpt_fp = None
+
+    train(scenario, 
+            scenario_configs,
+            env_configs,
+            rl_configs,
+            model_configs,
+            checkpt_fp,
+            wandb_mode=wandb_mode,
+            project_name=project_name
+            )
     
-    train_PPO(scenario,
-              scenario_configs,
-              env_configs,
-              rl_configs,
-              model_configs,
-              use_wandb=True
-              )
+    # python train.py "conf/scenarios/comms_0.yaml" "conf/envs/planning_env_explore_1.yaml" "conf/algos/ppo_4_0.yaml" "conf/models/mat_2_0.yaml" "TRAIN" "mothership-complex"
+    
+    # python train.py "conf/scenarios/comms_1.yaml" "conf/envs/planning_env_explore_4.yaml" "conf/algos/ppo_4_6.yaml" "conf/models/mat_2_2.yaml" "None" "TRAIN" "mothership-complex"
 
-
-    # == Problem/Project Notes ==
-
-    # 1. We have a set of "candidate behaviors/specializations" for passenger
-    # 2. Mothership/Agent learns to prioritize these behaviors/specializations given
-    # state of environment to maximize reward G.
-
-    # Why not have Mothership/Agent use a sampling-based planner to find best behavior?
-    # 1. Can be expensive/slow (especially for multiagent)
-    # 2. Communication overhead (especially for multiagent)
-    # 3 Information mismatch: Mothership/Agent priorization observation space is different
-    # from the operating agent's observation space.
+    # stats = pstats.Stats(pr)
+    # stats.sort_stats(pstats.SortKey.TIME)
+    # # Now you have two options, either print the data or save it as a file
+    # # stats.print_stats() # Print The Stats
+    # stats.dump_stats("eval_explore.prof") # Saves the data in a file, can me used to see the data visually

@@ -1,0 +1,1 @@
+python train.py "conf/scenarios/comms_0.yaml" "conf/envs/planning_env_explore_1.yaml" "conf/algos/ppo_4_0.yaml" "conf/models/mat_9.yaml" None "mothership-complex"
