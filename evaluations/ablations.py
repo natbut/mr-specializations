@@ -1,3 +1,7 @@
+# Load in multiple policy configurations and corresponding checkpoints, run tests for
+# input scenario/env, and save rewards & actions to CSV.
+
+
 import sys, os, glob
 import yaml
 import torch
@@ -8,11 +12,17 @@ from torchrl.envs.utils import (ExplorationType, set_exploration_type)
 from tensordict.tensordict import TensorDict
 from collections import defaultdict
 
-from envs.scenarios.explore_comms_tasks import Scenario
-from experiment_vec import load_yaml_to_kwargs, init_device, create_env, create_actor
-
 import csv
 
+# Add the parent directory itself to sys.path so imports like 'envs' work
+current_file = Path(__file__).resolve()
+parent_dir = current_file.parent.parent
+print("Parent dir:", parent_dir)
+sys.path.append(str(parent_dir))
+sys.path.append(str(parent_dir)+"\\envs")
+
+from envs.scenarios.explore_comms_tasks import Scenario
+from experiment_vec import load_yaml_to_kwargs, init_device, create_env, create_actor
 
 def get_by_cycle(xs, i):
     """Safely pick an item even if lists are length-1; cycles when needed."""
@@ -28,11 +38,26 @@ def pair_model_and_checkpoints(model_dir: str, ckpt_dir: str):
     ckpt_dir = Path(ckpt_dir)
 
     yaml_paths = {p.stem: p for p in sorted(model_dir.glob("*.yaml"))}
-    pt_paths = {p.stem: p for p in sorted(ckpt_dir.glob("*.pt"))}
+    # Strip any prefix before the actual model name in .pt filenames
+    pt_paths = {}
+    for p in sorted(ckpt_dir.glob("*.pt")):
+        # Example: dense_fullTF.pt -> fullTF
+        name = p.stem
+        if "_" in name:
+            name = name.split("_")[-1]
+        pt_paths[name] = p
 
     common = sorted(set(yaml_paths.keys()) & set(pt_paths.keys()))
     missing_models = sorted(set(pt_paths.keys()) - set(yaml_paths.keys()))
     missing_ckpts = sorted(set(yaml_paths.keys()) - set(pt_paths.keys()))
+
+
+    print("yaml paths:", yaml_paths)
+    print("pt paths:", pt_paths)
+    print("Common:", common)
+    print("Miss models:", missing_models)
+    print("Miss ckpts:", missing_ckpts)
+
 
     if missing_models:
         print("[warn] Checkpoints with no matching YAML:", ", ".join(missing_models))
@@ -155,6 +180,7 @@ def run_tests(scenario_configs,
 
     for i, (model_config_fp, ckpt_fp) in enumerate(model_ckpt_pairs):
         model_config_name = os.path.basename(model_config_fp)
+        checkpt_name = os.path.basename(ckpt_fp)
         # Choose a test index (cycle if multiple)
         test_index = i  # cycles via get_by_cycle inside test_setup / below
         test_config = load_yaml_to_kwargs(get_by_cycle(test_configs, test_index))
@@ -169,25 +195,27 @@ def run_tests(scenario_configs,
             scenario_obj,
         )
 
-        # Enable rendering
-        if hasattr(env, "base_env"):
-            env.base_env.render = True
-
         num_runs = test_config["num_runs"]
         rollout_steps = test_config["rollout_steps"]
+        create_gifs = test_config.get("create_gifs", False)
+        
+        # Enable rendering
+        if hasattr(env, "base_env") and create_gifs:
+            env.base_env.render = True
 
         for run in range(num_runs):
             torch.manual_seed(run)  # Reproducibility
 
             print(f"Preparing to run test {test_index} with policy, model {model_config_name}, run {run}...")
 
-            # Configure for eval with policy
-            render_name = f"test{test_index}_run{run}.gif"
-            render_fp = os.path.join(f"{folder_path}/gif/{model_config_name}/", render_name)
-            if hasattr(env, "base_env"):
-                env.base_env.render_fp = render_fp
-                env.base_env.count = run * rollout_steps
-            os.makedirs(os.path.dirname(render_fp), exist_ok=True)
+            # Configure rendering fp
+            if create_gifs:
+                render_name = f"test{test_index}_run{run}.gif"
+                render_fp = os.path.join(f"{folder_path}/gif/{checkpt_name}/", render_name)
+                if hasattr(env, "base_env"):
+                    env.base_env.render_fp = render_fp
+                    env.base_env.count = run * rollout_steps
+                os.makedirs(os.path.dirname(render_fp), exist_ok=True)
 
             # Run test & log
             policy_reward_mean, policy_reward_sum, rewards, actions = run_policy(env, logs, policy, rollout_steps)
@@ -211,7 +239,7 @@ def run_tests(scenario_configs,
 if __name__ == "__main__":
     # Usage: python run_tests.py <scenario_fp> <env_fp> <test_fp> <model_configs_dir> <checkpts_dir> <output_folder>
     if len(sys.argv) != 7:
-        print("Usage: python run_tests.py <scenario_fp> <env_fp> <test_fp> <model_configs_dir> <checkpts_dir> <output_folder>")
+        print("Usage: python ablations.py <scenario_fp> <env_fp> <test_fp> <model_configs_dir> <checkpts_dir> <output_folder>")
         sys.exit(1)
 
     scenario_fp = sys.argv[1]
@@ -237,4 +265,4 @@ if __name__ == "__main__":
         folder_path=test_folder_name
     )
 
-# policy_comparisons.py "conf\scenarios\comms_5.yaml" "conf\envs\planning_env_explore_5_1env.yaml" "conf\tests\trial1.yaml"  "eval_test\policy_configs" "eval_test\policy_weights" evaluations
+# python evaluations\ablations.py "conf\scenarios\comms_5.yaml" "conf\envs\planning_env_explore_5_1env.yaml" "evaluations\tests\trial1.yaml"  "evaluations\configs_weights\policy_configs" "evaluations\configs_weights\policy_weights" evaluations

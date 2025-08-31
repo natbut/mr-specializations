@@ -11,4 +11,6 @@ rollout_steps: 8 # 8
 
 planning_iters: 1
 
+create_gifs: False
+
 # predefined tasks 

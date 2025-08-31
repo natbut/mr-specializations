@@ -301,7 +301,7 @@ class EnvironmentTransformer(nn.Module):
         # print("Masked robot tokens:", robot_tokens[:5])
 
         # === Inject noise ===
-        if self.training and self.noise_std > 0 and not self.no_transformer:
+        if self.training and self.noise_std > 0:
             robot_tokens = robot_tokens + torch.randn_like(robot_tokens) * self.noise_std * robot_mask.unsqueeze(-1)
 
         # print("Noised robot tokens:", robot_tokens[:5])

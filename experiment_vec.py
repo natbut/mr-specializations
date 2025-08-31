@@ -257,6 +257,14 @@ def eval(scenario, scenario_configs, env_configs, model_configs, checkpt_fp, sav
     if no_transformer:
         use_encoder = False
         use_decoder = False
+    action_softmax = model_config.get("action_softmax", False)
+    action_max = model_config.get("action_max", False)
+    if action_softmax == True:
+        print("Using action softmax")
+        env.base_env.use_softmax = True
+    elif action_max == True:
+        print("Using action max")
+        env.base_env.use_max = True
     tf_act, policy_module = create_actor(env,
                                          num_features,
                                          num_heuristics,
@@ -642,11 +650,24 @@ def create_critic(num_features, d_model, cell_pos_as_features, device):
     return tf_crit, value_module
 
 
-def run_eval(env: TransformedEnv, policy_module, eval_id, folder_path, logs, rollout_steps=16, log_actions=False, render=False, wandb_mode=None):
+def run_eval(env: TransformedEnv, 
+             policy_module, 
+             eval_id, 
+             folder_path, 
+             logs, 
+             rollout_steps=16, 
+             log_actions=False,
+             log_trajs=False,
+             log_env=False,
+             render=False, 
+             wandb_mode=None
+             ):
     if type(rollout_steps) is not int:
         rollout_steps = int(rollout_steps)
 
     # Run evaluation
+    env.base_env.log_rollout = True
+    env.base_env.log_fp = os.path.join(f"{folder_path}/log/", f"eval_{eval_id}")
     env.base_env.render = render
     env.base_env.count = 0
     render_name = f"render_{eval_id}"

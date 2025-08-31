@@ -29,6 +29,7 @@ warm_start_tasks: True
 warm_start_range: 1.0
 warm_start_spawn_attempts: 50
 
+# Long range only
 enforce_task_spawn: True
 task_range_min: 0.5
 fixed_task_spawn_prob: 0.005

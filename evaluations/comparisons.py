@@ -1,3 +1,7 @@
+# Load in best policy configurations and corresponding checkpoint alongside HybDec planner
+# config and fixed agent objectives & run tests for input scenario/env. 
+# Save rewards to CSV.
+
 import sys, os
 import yaml
 import torch
@@ -8,23 +12,24 @@ from torchrl.envs.utils import (ExplorationType,
 from tensordict.tensordict import TensorDict
 from collections import defaultdict
 
-from envs.scenarios.explore_comms_tasks import Scenario
-from envs import planning_env_vec
-from experiment_vec import load_yaml_to_kwargs, init_device, create_env, create_actor
-
+import csv
 from pathlib import Path
 
 # Get the parent directory of the current file
 current_file = Path(__file__).resolve()
 parent_dir = current_file.parent.parent
+sys.path.append(str(parent_dir))
+
+from envs.scenarios.explore_comms_tasks import Scenario
+from envs import planning_env_vec
+from experiment_vec import load_yaml_to_kwargs, init_device, create_env, create_actor
 
 # Append "mcts-smop" directory to sys.path
-mcts_smop_path = parent_dir / "mcts-smop"
+mcts_smop_path = parent_dir.parent / "mcts-smop"
 sys.path.append(str(mcts_smop_path))
 
 from planner import HybDecPlanner
 from control.task import Task
-import csv
 
 def test_setup(test,
                scenario_configs,
@@ -32,7 +37,7 @@ def test_setup(test,
                model_configs,
                checkpoint,
                comp_configs
-               ) -> tuple[TransformedEnv, ProbabilisticActor, HybDecPlanner, defaultdict, dict]:
+               ):
 
     # LOAD CONFIGS #
     print("Loading configs & checkpoint...")
@@ -53,14 +58,42 @@ def test_setup(test,
 
     # ACTOR POLICY MODULES, LOAD WEIGHTS #
     print("Loading model weights...")
+    # ACTOR POLICY MODULES, LOAD WEIGHTS #
     num_features = model_config["num_features"]
     num_heuristics = model_config["num_heuristics"]
     d_feedforward = model_config["d_feedforward"]
     d_model = model_config["d_model"]
-    agent_attn = model_config["agent_attn"]
+    agent_attn=model_config["agent_attn"]
     cell_pos_as_features=model_config["cell_pos_as_features"]
     agent_id_enc = model_config.get("agent_id_enc", True)
-    tf_act, policy_module = create_actor(env, num_features, num_heuristics, d_feedforward, d_model, agent_attn, cell_pos_as_features, agent_id_enc, device)
+    use_encoder = model_config.get("use_encoder", True)
+    use_decoder = model_config.get("use_decoder", True)
+    rob_pos_enc = model_config.get("rob_pos_enc", True)
+    no_transformer = model_config.get("no_transformer", False)
+    if no_transformer:
+        use_encoder = False
+        use_decoder = False
+    action_softmax = model_config.get("action_softmax", False)
+    action_max = model_config.get("action_max", False)
+    if action_softmax == True:
+        print("Using action softmax")
+        env.base_env.use_softmax = True
+    elif action_max == True:
+        print("Using action max")
+        env.base_env.use_max = True
+    tf_act, policy_module = create_actor(env,
+                                         num_features,
+                                         num_heuristics,
+                                         d_feedforward,
+                                         d_model,
+                                         agent_attn, 
+                                         cell_pos_as_features, 
+                                         agent_id_enc, 
+                                         use_encoder,
+                                         use_decoder,
+                                         rob_pos_enc,
+                                         device
+                                         )
     tf_act.load_state_dict(checkpt_data['actor_state_dict'])
     tf_act.eval()
 
@@ -71,9 +104,8 @@ def test_setup(test,
     sim_data, merger_data, dec_mcts_data, sim_brvns_data = generate_planner_data(scenario_config,
                                                                                 comp_config,
                                                                                 )
-    planner = HybDecPlanner(sim_data, merger_data, dec_mcts_data, sim_brvns_data)
 
-    return env, policy_module, planner, logs, sim_data
+    return env, policy_module, logs, sim_data, merger_data, dec_mcts_data, sim_brvns_data
 
 
 def run_tests(scenario_configs,
@@ -95,13 +127,13 @@ def run_tests(scenario_configs,
         test_config = load_yaml_to_kwargs(test_configs[test])
                                               
         # Set up environments, policy, planner, and logs details
-        env, policy, planner, logs, sim_data = test_setup(test,
-                                                scenario_configs, 
-                                                env_configs, 
-                                                model_configs, 
-                                                checkpoint, 
-                                                comp_configs,
-                                                )
+        env, policy, logs, sim_data, merger_data, dec_mcts_data, sim_brvns_data = test_setup(test,
+                                                                                            scenario_configs, 
+                                                                                            env_configs, 
+                                                                                            model_configs, 
+                                                                                            checkpoint, 
+                                                                                            comp_configs,
+                                                                                            )
         
         env.base_env.render = True
         
@@ -113,12 +145,13 @@ def run_tests(scenario_configs,
         
         plan_heuristic_fns = ["goto_goal", "neediest_comms_midpt", "nearest_agent"]
 
-        data_dir = os.path.join(folder_path, "data")
+        scenario_name = os.path.splitext(os.path.basename(scenario_configs[test]))[0]
+        data_dir = os.path.join(folder_path, "data_"+str(scenario_name))
         os.makedirs(data_dir, exist_ok=True)
         csv_fp = os.path.join(data_dir, "results.csv")
         csv_header = [
             "test", "run",
-            "policy_reward_mean", "policy_reward_sum",
+            "policy_reward_mean", "policy_reward_sum", "policy_actions",
             "h_tasks_reward_mean", "h_tasks_reward_sum",
             "h_split_reward_mean", "h_split_reward_sum",
             "planner_reward_mean", "planner_reward_sum"
@@ -128,21 +161,27 @@ def run_tests(scenario_configs,
 
             seed = TensorDict({"seed": torch.tensor([run,])}, batch_size=[1])
 
+            # Toggle rendering
+            if run % 5 == 0:
+                # Configure render
+                env.base_env.render = True
+                render_name = f"render_policy"
+                render_fp = os.path.join(f"{folder_path}/gif_{scenario_name}/policy/", render_name)
+                env.base_env.render_fp = render_fp
+                env.base_env.count = run*rollout_steps
+                os.makedirs(os.path.dirname(render_fp), exist_ok=True)
+            else:
+                env.base_env.render = False
+                
+
             # ---- Run test with policy ----
             print(f"Preparing to run test {test} with policy...")
-
-            # Configure for eval with policy
-            render_name = f"render_policy"
-            render_fp = os.path.join(f"{folder_path}/gif/policy/", render_name)
-            env.base_env.render_fp = render_fp
-            env.base_env.count = run*rollout_steps
-            os.makedirs(os.path.dirname(render_fp), exist_ok=True)
 
             # Set heuristics for policy
             env.base_env.reset_heuristic_eval_fns()
             
             # Run test & log   
-            policy_reward_mean, policy_reward_sum = run_policy(env, logs, policy, rollout_steps, seed=seed)
+            policy_reward_mean, policy_reward_sum, policy_actions = run_policy(env, logs, policy, rollout_steps, seed=seed)
             print("Mean reward policy:", logs["policy reward (mean)"])
 
 
@@ -156,7 +195,7 @@ def run_tests(scenario_configs,
             actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
 
             # Run test & log
-            h_tasks_reward_mean, h_tasks_reward_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="all_tasks", seed=seed, folder_path=folder_path)            
+            h_tasks_reward_mean, h_tasks_reward_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="all_tasks", scenario_name=scenario_name, seed=run, folder_path=folder_path)            
             print("Mean all_tasks heuristics:", logs["all_tasks reward (mean)"])
 
 
@@ -173,17 +212,23 @@ def run_tests(scenario_configs,
             actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
 
             # Run test & log
-            h_split_reward_mean, h_split_reward_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="split", seed=seed, folder_path=folder_path)      
+            h_split_reward_mean, h_split_reward_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="split", scenario_name=scenario_name, seed=run, folder_path=folder_path)      
             print("Mean split heuristics:", logs["split h reward (mean)"])
 
 
             # ---- Run test with planner ----
             print("\nPreparing to run test with planner...")
-            render_name = f"render_planner"
-            render_fp = os.path.join(f"{folder_path}/gif/planner/", render_name)
-            env.base_env.render_fp = render_fp
-            env.base_env.count = run*rollout_steps
-            os.makedirs(os.path.dirname(render_fp), exist_ok=True)
+            # Toggle rendering
+            if run % 5 == 0:
+                # Configure render
+                env.base_env.render = True
+                render_name = f"render_planner"
+                render_fp = os.path.join(f"{folder_path}/gif_{scenario_name}/planner/", render_name)
+                env.base_env.render_fp = render_fp
+                env.base_env.count = run*rollout_steps
+                os.makedirs(os.path.dirname(render_fp), exist_ok=True)
+            else:
+                env.base_env.render = False
 
             # Configure for eval with planner
             # Update heuristics for planning
@@ -205,14 +250,17 @@ def run_tests(scenario_configs,
 
             # Run test & log
             print("Running test...")
-            env.reset(seed) # TODO seed
+            env.reset() # TODO seed
             # env.base_env._set_seed(run)
-            planner_rollout_rewards = rollout_with_planner(env,
-                                        actions,
-                                        planner,
-                                        sim_data,
-                                        rollout_steps,
-                                        planning_iters,
+            planner_rollout_rewards = rollout_with_planner(
+                                        env=env,
+                                        actions=actions,
+                                        sim_data=sim_data,
+                                        merger_data=merger_data,
+                                        dec_mcts_data=dec_mcts_data,
+                                        sim_brvns_data=sim_brvns_data,
+                                        rollout_steps=rollout_steps,
+                                        planning_iters=planning_iters,
                                         )
             planner_reward_sum = sum(planner_rollout_rewards[1:])
             planner_reward_mean = planner_reward_sum / len(planner_rollout_rewards[1:])
@@ -233,7 +281,7 @@ def run_tests(scenario_configs,
                     writer.writerow(csv_header)
                 writer.writerow([
                     test, run,
-                    policy_reward_mean, policy_reward_sum,
+                    policy_reward_mean, policy_reward_sum, policy_actions,
                     h_tasks_reward_mean, h_tasks_reward_sum,
                     h_split_reward_mean, h_split_reward_sum,
                     planner_reward_mean, planner_reward_sum
@@ -241,15 +289,27 @@ def run_tests(scenario_configs,
         
         print("Done!")
 
-def run_fixed_heuristics(env: TransformedEnv, logs: defaultdict, actions, rollout_steps: int, name: str, seed, folder_path="test"):
+def run_fixed_heuristics(env: TransformedEnv, logs: defaultdict, actions, rollout_steps: int, name: str, scenario_name: str, seed, folder_path="test"):
     print("Running fixed heuristics...")
-    render_name = f"render_{name}"
-    render_fp = os.path.join(f"{folder_path}/gif/{name}/", render_name)
-    env.base_env.render_fp = render_fp
-    env.base_env.count = seed["seed"][0]*rollout_steps
-    os.makedirs(os.path.dirname(render_fp), exist_ok=True)
+    # render_name = f"render_{name}"
+    # render_fp = os.path.join(f"{folder_path}/gif/{name}/", render_name)
+    # env.base_env.render_fp = render_fp
+    # env.base_env.count = seed["seed"][0]*rollout_steps
+    # os.makedirs(os.path.dirname(render_fp), exist_ok=True)
 
-    env.reset(seed) # TODO seed
+    # Toggle rendering
+    if seed % 5 == 0:
+        # Configure render
+        env.base_env.render = True
+        render_name = f"render_{name}"
+        render_fp = os.path.join(f"{folder_path}/gif_{scenario_name}/{name}/", render_name)
+        env.base_env.render_fp = render_fp
+        env.base_env.count = seed*rollout_steps
+        os.makedirs(os.path.dirname(render_fp), exist_ok=True)
+    else:
+        env.base_env.render = False
+
+    env.reset() # TODO seed
     # env.base_env._set_seed(seed)
     fixed_rollout_rewards = rollout_fixed_actions(env, actions, rollout_steps)
     reward_sum = sum(fixed_rollout_rewards[1:])
@@ -263,7 +323,7 @@ def run_policy(env: TransformedEnv, logs: defaultdict, policy, rollout_steps: in
     with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
         # execute a rollout with the trained policy
         print("Running policy...")
-        env.reset(seed) # TODO seed
+        env.reset() # TODO seed
         # env.base_env._set_seed(seed)
         policy_rollout = env.rollout(rollout_steps, policy, return_contiguous=False)
         print("Policy reward shape:", policy_rollout["next", "reward"].shape)
@@ -273,7 +333,7 @@ def run_policy(env: TransformedEnv, logs: defaultdict, policy, rollout_steps: in
         logs["policy reward (sum)"].append(policy_reward_sum)
         logs["action"] = policy_rollout["action"]
 
-    return policy_reward_mean, policy_reward_sum
+    return policy_reward_mean, policy_reward_sum, policy_rollout["action"]
 
 
 def rollout_fixed_actions(env: TransformedEnv,
@@ -299,8 +359,10 @@ def rollout_fixed_actions(env: TransformedEnv,
 
 def rollout_with_planner(env: TransformedEnv,
                          actions,
-                         planner,
                          sim_data,
+                         merger_data, 
+                         dec_mcts_data, 
+                         sim_brvns_data,
                          rollout_steps: int,
                          planning_iters: int
                          ):
@@ -310,6 +372,8 @@ def rollout_with_planner(env: TransformedEnv,
     logs = {}
     logs["reward"] = 0.0
     rewards = []
+
+    planner = HybDecPlanner(sim_data, merger_data, dec_mcts_data, sim_brvns_data)
 
     # Update agent planning observations
     tasks_pos, workers_pos = get_updated_tasks_workers(agents)
@@ -481,4 +545,5 @@ if __name__ == "__main__":
     
 
 
-# python comparisons.py "conf/scenarios/comms_5_eval.yaml" "conf/envs/planning_env_explore_5_1env.yaml" "conf/tests/trial1.yaml" "conf/models/mat_2_3.yaml" "runs\comms_5_planning_env_explore_5_ppo_4_7_mat_2_3\checkpoints\best.pt" "conf/hybdec/solver1.yaml" "test"
+# python evaluations/comparisons.py "conf/scenarios/comms_5_eval.yaml" "conf/envs/planning_env_explore_5_1env.yaml" "evaluations/tests/trial1.yaml" "evaluations/configs_weights/policy_configs/fullTF.yaml" "evaluations/configs_weights/policy_weights/dense_fullTF.pt" "evaluations/hybdec/solver1.yaml" "comparisons"
+# python evaluations/comparisons.py "conf/scenarios/comms_5_eval2.yaml" "conf/envs/planning_env_explore_5_1env.yaml"  "evaluations/tests/trial1.yaml" "evaluations/configs_weights/policy_configs/fullTF.yaml" "evaluations/configs_weights/policy_weights/dense_fullTF.pt" "evaluations/hybdec/solver1.yaml" "evaluations/comparisons"

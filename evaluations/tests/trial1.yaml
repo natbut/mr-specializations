@@ -5,9 +5,9 @@ agent_assignments:
 - SUPPORT
 - SUPPORT
 
-num_runs: 50 # 50
+num_runs: 30 # 50
 
-rollout_steps: 16 # 8
+rollout_steps: 8 # 8
 
 planning_iters: 1
 
