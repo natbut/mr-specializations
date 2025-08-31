@@ -2,6 +2,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import argparse
+import seaborn as sns
 
 
 if __name__ == "__main__":
@@ -15,10 +16,10 @@ if __name__ == "__main__":
 
     # Define method columns
     methods = {
-        "Policy": ("policy_reward_sum", "policy_reward_mean"),
+        "HybridDec": ("planner_reward_sum", "planner_reward_mean"),
         "Tasks Only": ("h_tasks_reward_sum", "h_tasks_reward_mean"),
         "Tasks+Comms": ("h_split_reward_sum", "h_split_reward_mean"),
-        # "HybridDec": ("planner_reward_sum", "planner_reward_mean")
+        "MACPS": ("policy_reward_sum", "policy_reward_mean"),
     }
 
     # Initialize data containers
@@ -38,18 +39,31 @@ if __name__ == "__main__":
             mean_stds.append(df_final[mean_col].std())
 
     # Plot
-    x = range(len(labels))
-    width = 0.35
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar([i - width/2 for i in x], sum_means, width, yerr=sum_stds, capsize=8, label='Sum')
-    ax.bar([i + width/2 for i in x], mean_means, width, yerr=mean_stds, capsize=8, label='Mean')
+    x = range(len(labels))
+    width = 0.5
+
+    # Set seaborn color palette and style
+    sns.set_palette("pastel")
+    sns.set_style("whitegrid")
+
+    # Increase font sizes globally
+    plt.rcParams.update({
+        'font.size': 28,
+        'axes.titlesize': 22,
+        'axes.labelsize': 22,
+        'xtick.labelsize': 22,
+        'ytick.labelsize': 22,
+        'legend.fontsize': 22
+    })
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    bars = ax.bar(x, sum_means, width, yerr=sum_stds, align='center', capsize=5, label='Sum', color=sns.color_palette()[0])
+    ax.bar_label(bars, label_type='edge', fmt='%.3f', fontsize=18)
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylabel('Task Value Returned')
-    ax.set_title('Task Value Returned to Mothership for Policy and Hybrid-Decentralized Methods')
-    ax.legend()
-    ax.grid(True, axis='y')
+    ax.set_title('Long-Range Task Comparisons')
     plt.tight_layout()
     plt.show()

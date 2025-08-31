@@ -11,6 +11,3 @@ agent_id_enc: False
 
 action_max: False
 no_transformer: True
-use_encoder: False
-use_decoder: False
-rob_pos_enc: False

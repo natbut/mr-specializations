@@ -6,10 +6,18 @@ import socket
 import sys
 import threading
 import time
+import os
+import socket
+import sys
+import threading
+import time
 from collections import defaultdict
 
 import torch
 from HardwareAgent import *
+from tensordict import TensorDict
+from torch import float32, tensor
+from torch.serialization import add_safe_globals, load
 from tensordict import TensorDict
 from torch import float32, tensor
 from torch.serialization import add_safe_globals, load
@@ -20,8 +28,14 @@ sys.path.insert(0, parent_dir)
 from envs.scenarios.explore_comms_tasks import Scenario
 from experiment_vec import create_actor, create_env, init_device
 
+from experiment_vec import create_actor, create_env, init_device
+
 
 class Mothership(HardwareAgent):
+    
+    D_TYPE = float32
+
+    def __init__(self, id):
     
     D_TYPE = float32
 
@@ -29,11 +43,15 @@ class Mothership(HardwareAgent):
         """Planning & comms coordination agent for Passenger robots."""
 
         super().__init__(id)
+        super().__init__(id)
 
         self.recieved_obs = {} # Real observations, in lat/lon
         self.scaled_obs = {} # Observations scaled to [-1, 1]
 
         self.policy = None # Model for coordinating passenger robots
+        self.device = "cpu"
+        
+        self.num_specializations = 0 # Number of possible passenger specializations
         self.device = "cpu"
         
         self.num_specializations = 0 # Number of possible passenger specializations
@@ -59,13 +77,17 @@ class Mothership(HardwareAgent):
         agents = {}
         for i in range(self.num_passengers):
             agents[i+1] = copy.deepcopy(self.scaled_obs["mother_pos"])
+        for i in range(self.num_passengers):
+            agents[i+1] = copy.deepcopy(self.scaled_obs["mother_pos"])
         self.scaled_obs["agents_pos"] = agents
         print(f"Init scaled agents_pos:", self.scaled_obs["agents_pos"])
 
         self.my_location = self.scaled_obs["mother_pos"]
         
+        
 
         # Load model
+        model, policy = self.initialize_policy(model_conf_fp,
         model, policy = self.initialize_policy(model_conf_fp,
                                             model_weights_fp,
                                             scenario_conf_fp,
@@ -236,11 +258,15 @@ class Mothership(HardwareAgent):
         agent_id_enc = model_config["agent_id_enc"]
         use_encoder = model_config.get("use_encoder", True)
         use_decoder = model_config.get("use_decoder", True)
+        use_encoder = model_config.get("use_encoder", True)
+        use_decoder = model_config.get("use_decoder", True)
         rob_pos_enc = model_config.get("rob_pos_enc", True)
 
         self.device = init_device()
+        self.device = init_device()
 
         dummy_env = create_env(Scenario(), 
+                               self.device, 
                                self.device, 
                                env_config, 
                                scenario_config, 
@@ -258,7 +284,10 @@ class Mothership(HardwareAgent):
                                             agent_id_enc, 
                                             use_encoder,
                                             use_decoder,
+                                            use_encoder,
+                                            use_decoder,
                                             rob_pos_enc,
+                                            self.device
                                             self.device
                                             )
         print("Model and policy created, loading weights...")
@@ -291,6 +320,7 @@ def listener():
     global coordinate_trigger
     s = socket.socket()
     s.bind(('localhost', base_ports["coordinate"])) 
+    s.bind(('localhost', base_ports["coordinate"])) 
     s.listen(1)
     while True:
         conn, _ = s.accept()
@@ -304,18 +334,25 @@ if __name__ == "__main__":
     parser.add_argument("--config_fp", type=str, required=True, help="Path to problem config file")    
     parser.add_argument("--robot_id", type=int, default=0, help="Mothership ID")
     parser.add_argument("--sim_comms", type=bool, default=False, help="Dummy comms bool. Defaults to False (no simulated comms)")
+    parser.add_argument("--robot_id", type=int, default=0, help="Mothership ID")
+    parser.add_argument("--sim_comms", type=bool, default=False, help="Dummy comms bool. Defaults to False (no simulated comms)")
 
     args = parser.parse_args()
 
     # Create agent
     mothership = Mothership(args.robot_id)
+    mothership = Mothership(args.robot_id)
     mothership.load_deployment_config(args.config_fp) 
 
+    # Trigger initialization
     # Trigger initialization
     threading.Thread(target=listener, daemon=True).start()
 
     # Action loop
     while True:
+    
+        # Process any recieved messages
+        mothership.receive_messages()
     
         # Process any recieved messages
         mothership.receive_messages()

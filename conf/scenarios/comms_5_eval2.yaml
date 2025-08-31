@@ -25,6 +25,7 @@ spawn_tasks_burst: True
 spawn_agents_at_base: True
 variable_team_size: True
 
+# Short range only
 warm_start_tasks: True
 warm_start_range: 0.5
 warm_start_spawn_attempts: 50

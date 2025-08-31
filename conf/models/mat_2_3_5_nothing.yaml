@@ -9,7 +9,7 @@ cell_pos_as_features: True
 action_softmax: False
 agent_id_enc: False
 
-action_max: False
+action_max: True
 no_transformer: True
 use_encoder: False
 use_decoder: False

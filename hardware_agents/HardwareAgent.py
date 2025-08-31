@@ -5,8 +5,12 @@ import os
 import yaml
 
 
+
 class HardwareAgent():
 
+    def __init__(self, id):
+        
+        self.my_id = id
     def __init__(self, id):
         
         self.my_id = id
@@ -120,6 +124,7 @@ class HardwareAgent():
         return [lat, lon]
 
 
+    def prepare_message(self, msg_type, target_id, contents):
     def prepare_message(self, msg_type, target_id, contents):
         """
         Prepare contents to be transmitted by comms modems.

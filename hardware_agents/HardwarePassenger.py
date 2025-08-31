@@ -33,6 +33,8 @@ def load_func(dotpath : str):
 class Passenger(HardwareAgent):
     
     TASK_COMP_RANGE = 0.075 # scaled dims
+    
+    TASK_COMP_RANGE = 0.075 # scaled dims
 
     def __init__(self, id):
         """Planning & comms coordination agent for Passenger robots."""
@@ -123,6 +125,10 @@ class Passenger(HardwareAgent):
         obst_obs = self._get_dist_feature_value(obsts_tensor)
         agent_obs = self._get_dist_feature_value(agents_tensor)
         mother_obs = self._get_dist_feature_value(torch.tensor(self.scaled_obs["mother_pos"]))
+        task_obs = self._get_dist_feature_value(tasks_tensor)
+        obst_obs = self._get_dist_feature_value(obsts_tensor)
+        agent_obs = self._get_dist_feature_value(agents_tensor)
+        mother_obs = self._get_dist_feature_value(torch.tensor(self.scaled_obs["mother_pos"]))
         exploration_obs = 1.0 # assumes all cells are explored
         frontiers_obs = 0.0 # assumes all cells are explored
 
@@ -134,8 +140,13 @@ class Passenger(HardwareAgent):
                    mother_obs,
                    self.my_location[0],
                    self.my_location[1]
+                   self.my_location[0],
+                   self.my_location[1]
                    ]
         
+        print("Cell obs vector:", obs_vec)
+        
+        self.prepare_message("obs_vec", 0, obs_vec)
         print("Cell obs vector:", obs_vec)
         
         self.prepare_message("obs_vec", 0, obs_vec)
@@ -144,6 +155,13 @@ class Passenger(HardwareAgent):
     def send_location_obs_message(self):
         """
         Send out my location (scaled)
+        """
+        loc = (self.my_id, self.my_location)
+        
+        for a_id in range(1, self.num_passengers+1):
+            if a_id != self.my_id:
+                self.prepare_message("agent_pos", a_id, loc)
+        self.prepare_message("agent_pos", 0, loc)
         """
         loc = (self.my_id, self.my_location)
         
@@ -346,6 +364,7 @@ class Passenger(HardwareAgent):
         plt.savefig(plan_path.replace('.plan', '.png'))
         plt.show()
         plt.close()
+        plt.close()
 
 
     def _get_dist_feature_value(self, feature: torch.tensor):
@@ -398,7 +417,17 @@ def save_waypoints_to_file(
     current_depth=0.0,
     home_position=None
 ):
+def save_waypoints_to_file(
+    waypoints,
+    filename="mission_plan.plan",
+    agent_type="sub",
+    use_current_depth=False,
+    current_depth=0.0,
+    home_position=None
+):
     """
+    Saves waypoints to a QGroundControl-compatible .plan JSON file for ArduSub or ArduRover.
+
     Saves waypoints to a QGroundControl-compatible .plan JSON file for ArduSub or ArduRover.
 
     Args:
@@ -516,9 +545,13 @@ if __name__ == "__main__":
     planning_trigger = False
     update_trigger = False
     passenger_latlon = ()
+    update_trigger = False
+    passenger_latlon = ()
 
     parser = argparse.ArgumentParser(description="Run simulated hardware agents")
     parser.add_argument("--config_fp", type=str, required=True, help="Path to problem config file")
+    parser.add_argument("--robot_id", type=int, default=1, help="Passenger ID")
+    parser.add_argument("--sim_comms", type=bool, default=False, help="Dummy comms bool. Defaults to False (no simulated comms)")
     parser.add_argument("--robot_id", type=int, default=1, help="Passenger ID")
     parser.add_argument("--sim_comms", type=bool, default=False, help="Dummy comms bool. Defaults to False (no simulated comms)")
 
@@ -558,6 +591,7 @@ if __name__ == "__main__":
             print("Update done. Update socket waiting...")
 
         # Process any recieved messages
+        passenger.receive_messages()
         passenger.receive_messages()
 
         # Process planning commands
