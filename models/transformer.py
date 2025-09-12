@@ -203,7 +203,7 @@ class EnvironmentTransformer(nn.Module):
                 batch_first=True
             )
             self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-            print(f"Using transformer encoder; self.use_encoder={self.use_encoder}")
+            print(f"!!! Using transformer encoder; self.use_encoder={self.use_encoder}")
         if self.use_decoder == True:
             # Transformer decoder (self + cross-attention)
             decoder_layer = nn.TransformerDecoderLayer(
@@ -214,7 +214,7 @@ class EnvironmentTransformer(nn.Module):
                 batch_first=True
             )
             self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
-            print(f"Using transformer decoder; self.use_decoder={self.use_decoder}")
+            print(f"!!! Using transformer decoder; self.use_decoder={self.use_decoder}")
 
 
         if self.agent_attn == True:
@@ -301,7 +301,7 @@ class EnvironmentTransformer(nn.Module):
         # print("Masked robot tokens:", robot_tokens[:5])
 
         # === Inject noise ===
-        if self.training and self.noise_std > 0 and not self.no_transformer:
+        if self.training and self.noise_std > 0:
             robot_tokens = robot_tokens + torch.randn_like(robot_tokens) * self.noise_std * robot_mask.unsqueeze(-1)
 
         # print("Noised robot tokens:", robot_tokens[:5])
@@ -356,7 +356,9 @@ class EnvironmentTransformer(nn.Module):
             print(f"Sample features at call {self.calls}:\n", cell_feats_with_pos[:num_samps])
             print(f"Sample embedded features at call {self.calls}:\n", x[:num_samps])
             print(f"Sample encoder out at call {self.calls}:\n", enc_out[:num_samps])
+            print(f"Sample encoder mask at call {self.calls}:\n", mask[:num_samps])
             print(f"Sample robot_token out at call {self.calls}:\n", robot_tokens[:num_samps])
+            print(f"Sample robot mask at call {self.calls}:\n", robot_mask[:num_samps])
             print(f"Sample decoder out at call {self.calls}:\n", decoder_out[:num_samps])
             print(f"Sample output vals at call {self.calls}:\n", vals[:num_samps])
             print(f"Sample h_weights loc at call {self.calls}:\n", h_loc[:num_samps])
