@@ -61,6 +61,8 @@ if __name__ == "__main__":
     
     # python train.py "conf/scenarios/comms_1.yaml" "conf/envs/planning_env_explore_4.yaml" "conf/algos/ppo_4_6.yaml" "conf/models/mat_2_2.yaml" "None" "TRAIN" "mothership-complex"
 
+    # python train.py "conf/scenarios/comms_5.yaml" "conf/envs/planning_env_explore_5.yaml" "conf/algos/ppo_4_8.yaml" "conf/models/mat_encOnly.yaml" "None" "TRAIN" "mothership-complex"
+
     # stats = pstats.Stats(pr)
     # stats.sort_stats(pstats.SortKey.TIME)
     # # Now you have two options, either print the data or save it as a file
