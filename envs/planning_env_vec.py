@@ -238,15 +238,17 @@ class VMASPlanningEnv(EnvBase):
                         for i, traj in enumerate(agent.trajs):
                             # Check if a new trajectory has been generated
                             # Compare trajectories using torch.equal for tensors
-                            if not hasattr(agent, 'last_logged_traj') or len(agent.last_logged_traj) <= i or not torch.equal(torch.stack(agent.last_logged_traj[i]), torch.stack(traj)):
+                            # print("Logged traj: ", agent.last_logged_traj if hasattr(agent, 'last_logged_traj') else None)
+                            # print("Current traj:", traj)
+                            if not hasattr(agent, 'last_logged_traj') or not torch.equal(torch.stack(agent.last_logged_traj), torch.stack(traj)):
                                 for waypoint_idx, waypoint in enumerate(traj):
                                     wp = waypoint.tolist()
                                     log_file.write(f"{self.steps},{t},agent_{id}_traj_{i},{waypoint_idx},{wp[0]},{wp[1]}\n")
                                 
                                 # Update the last logged trajectory
-                                if not hasattr(agent, 'last_logged_traj'):
-                                    agent.last_logged_traj = [[] for _ in range(self.num_envs)]
-                                agent.last_logged_traj[i] = traj
+                                # if not hasattr(agent, 'last_logged_traj'):
+                                #     agent.last_logged_traj = [[] for _ in range(self.num_envs)]
+                                agent.last_logged_traj = traj
                 log_file.close()
     
             # BURST TASK SPAWNING (ONLY ON LAST STEP)
