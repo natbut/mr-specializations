@@ -27,7 +27,7 @@ variable_team_size: True
 
 # Long range only
 warm_start_tasks: True
-warm_start_range: 1.0
+warm_start_range: 0.75
 warm_start_spawn_attempts: 50
 
 enforce_task_spawn: True

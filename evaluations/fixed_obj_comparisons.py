@@ -24,19 +24,11 @@ from envs.scenarios.explore_comms_tasks import Scenario
 from envs import planning_env_vec
 from experiment_vec import load_yaml_to_kwargs, init_device, create_env, create_actor
 
-# Append "mcts-smop" directory to sys.path
-mcts_smop_path = parent_dir.parent / "mcts-smop"
-sys.path.append(str(mcts_smop_path))
-
-from planner import HybDecPlanner
-from control.task import Task
-
 def test_setup(test,
                scenario_configs,
                env_configs,
                model_configs,
                checkpoint,
-               comp_configs
                ):
 
     # LOAD CONFIGS #
@@ -44,7 +36,6 @@ def test_setup(test,
     scenario_config = load_yaml_to_kwargs(scenario_configs[test])
     env_config = load_yaml_to_kwargs(env_configs[test])
     model_config = load_yaml_to_kwargs(model_configs[test])
-    comp_config = load_yaml_to_kwargs(comp_configs[test])
     # LOAD MODEL WEIGHTS #
     torch.serialization.add_safe_globals([defaultdict])
     torch.serialization.add_safe_globals([list])
@@ -99,13 +90,7 @@ def test_setup(test,
 
     logs = defaultdict(list)
 
-    # CREATE PLANNER #
-    print("Creating planner...")
-    sim_data, merger_data, dec_mcts_data, sim_brvns_data = generate_planner_data(scenario_config,
-                                                                                comp_config,
-                                                                                )
-
-    return env, policy_module, logs, sim_data, merger_data, dec_mcts_data, sim_brvns_data
+    return env, policy_module, logs
 
 
 def run_tests(scenario_configs,
@@ -113,7 +98,6 @@ def run_tests(scenario_configs,
               test_configs,
               model_configs,
               checkpoint,
-              comp_configs,
               folder_path="test",
               ):
     """Run tests to evaluate model vs comparison method."""
@@ -128,13 +112,12 @@ def run_tests(scenario_configs,
         test_config = load_yaml_to_kwargs(test_configs[test])
                                               
         # Set up environments, policy, planner, and logs details
-        env, policy, logs, sim_data, merger_data, dec_mcts_data, sim_brvns_data = test_setup(test,
-                                                                                            scenario_configs, 
-                                                                                            env_configs, 
-                                                                                            model_configs, 
-                                                                                            checkpoint, 
-                                                                                            comp_configs,
-                                                                                            )
+        env, policy, logs  = test_setup(test,
+                                            scenario_configs, 
+                                            env_configs, 
+                                            model_configs, 
+                                            checkpoint, 
+                                            )
         
         env.base_env.render = True
         
@@ -153,9 +136,12 @@ def run_tests(scenario_configs,
         csv_header = [
             "test", "run",
             "policy_reward_mean", "policy_reward_sum", "policy_actions",
-            "h_tasks_reward_mean", "h_tasks_reward_sum",
-            "h_split_reward_mean", "h_split_reward_sum",
-            "planner_reward_mean", "planner_reward_sum"
+            "tasks_reward_mean", "tasks_reward_sum",
+            "taskcomms_reward_mean", "taskcomms_reward_sum",
+            "taskexp_reward_mean", "taskexp_reward_sum",
+            "taskcommsexpA_reward_mean", "taskcommsexpA_reward_sum",
+            "taskcommsexpB_reward_mean", "taskcommsexpB_reward_sum",
+            "taskcommsexpC_reward_mean", "taskcommsexpC_reward_sum",
         ]
 
         for run in range(num_runs):
@@ -187,7 +173,6 @@ def run_tests(scenario_configs,
 
 
             # ---- Run test with h_tasks only ----
-            
             # Fix agent actions
             agents = env.base_env.sim_env.scenario.active_agents
             actions = []
@@ -196,12 +181,11 @@ def run_tests(scenario_configs,
             actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
 
             # Run test & log
-            h_tasks_reward_mean, h_tasks_reward_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="all_tasks", scenario_name=scenario_name, seed=run, folder_path=folder_path)            
-            print("Mean all_tasks heuristics:", logs["all_tasks reward (mean)"])
+            tasks_rew_mean, tasks_rew_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="all_tasks", scenario_name=scenario_name, seed=run, folder_path=folder_path)            
+            print("Mean all tasks:", logs["all_tasks reward (mean)"])
 
 
             # ---- Run test with split h_tasks, h_comms ----
-            
             # Fix agent actions
             agents = env.base_env.sim_env.scenario.active_agents
             actions = []
@@ -213,65 +197,78 @@ def run_tests(scenario_configs,
             actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
 
             # Run test & log
-            h_split_reward_mean, h_split_reward_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="split", scenario_name=scenario_name, seed=run, folder_path=folder_path)      
-            print("Mean split heuristics:", logs["split h reward (mean)"])
+            taskcomms_rew_mean, taskcomms_rew_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="taskcomms", scenario_name=scenario_name, seed=run, folder_path=folder_path)      
+            print("Mean tasks/comms:", logs["task_comms reward (mean)"])
 
 
-            # ---- Run test with planner ----
-            print("\nPreparing to run test with planner...")
-            # Toggle rendering
-            if run % 5 == 0:
-                # Configure render
-                env.base_env.render = True
-                render_name = f"render_planner"
-                render_fp = os.path.join(f"{folder_path}/gif_{scenario_name}/planner/", render_name)
-                env.base_env.render_fp = render_fp
-                env.base_env.count = run*rollout_steps
-                os.makedirs(os.path.dirname(render_fp), exist_ok=True)
-            else:
-                env.base_env.render = False
-
-            # Configure for eval with planner
-            # Update heuristics for planning
-            env.base_env.set_heuristic_eval_fns(plan_heuristic_fns)
-
-            # Update actions according to assignments
-            actions = []
+            # ---- Run test with split tasks, explore ----
+            # Fix agent actions
             agents = env.base_env.sim_env.scenario.active_agents
-            for i, assignment in enumerate(agent_assignments):
-                if assignment == "WORKER":
-                    actions += [1, 0, 0]
-                    agents[i].set_mode("WORKER")
-                elif assignment == "SUPPORT":
-                    actions += [1, 0, 0]
-                    agents[i].set_mode(f"SUPPORT_{i}")
+            actions = []
+            for i, _ in enumerate(agents):
+                if i % 2 == 0:
+                    actions += TASKS_ONLY
                 else:
-                    actions += [0, 0, 0]  # fallback/default
+                    actions += EXPLORE_ONLY
             actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
 
             # Run test & log
-            print("Running test...")
-            env.reset() # TODO seed
-            # env.base_env._set_seed(run)
-            planner_rollout_rewards = rollout_with_planner(
-                                        env=env,
-                                        actions=actions,
-                                        sim_data=sim_data,
-                                        merger_data=merger_data,
-                                        dec_mcts_data=dec_mcts_data,
-                                        sim_brvns_data=sim_brvns_data,
-                                        rollout_steps=rollout_steps,
-                                        planning_iters=planning_iters,
-                                        )
-            planner_reward_sum = sum(planner_rollout_rewards[1:])
-            planner_reward_mean = planner_reward_sum / len(planner_rollout_rewards[1:])
-            logs["planner reward (mean)"].append(planner_reward_mean)
-            logs["planner reward (sum)"].append(planner_reward_sum)
-            
-            print("Mean reward planner:", logs["planner reward (mean)"])
+            taskexp_rew_mean, taskexp_rew_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="taskexp", scenario_name=scenario_name, seed=run, folder_path=folder_path)      
+            print("Mean tasks/explore:", logs["tasks_explore reward (mean)"])
 
-            for a in agents:
-                a.set_mode("NoMode")
+
+            # ---- Run test with 2 tasks, 1 comms, 1 explore ----
+            # Fix agent actions
+            agents = env.base_env.sim_env.scenario.active_agents
+            actions = []
+            for i, _ in enumerate(agents):
+                if i < 2:
+                    actions += TASKS_ONLY
+                elif i == 2:
+                    actions += COMMS_ONLY
+                elif i == 3:
+                    actions += EXPLORE_ONLY
+            actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
+
+            # Run test & log
+            taskcommexpA_rew_mean, taskcommexpA_rew_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="taskcommexpA", scenario_name=scenario_name, seed=run, folder_path=folder_path)      
+            print("Mean 2task, 1comm, 1exp:", logs["taskcommexpA reward (mean)"])
+
+
+            # ---- Run test with 1 tasks, 2 comms, 1 explore ----
+            # Fix agent actions
+            agents = env.base_env.sim_env.scenario.active_agents
+            actions = []
+            for i, _ in enumerate(agents):
+                if i < 2:
+                    actions += COMMS_ONLY
+                elif i == 2:
+                    actions += EXPLORE_ONLY
+                elif i == 3:
+                    actions += TASKS_ONLY
+            actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
+
+            # Run test & log
+            taskcommexpB_rew_mean, taskcommexpB_rew_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="taskcommexpB", scenario_name=scenario_name, seed=run, folder_path=folder_path)      
+            print("Mean 1task, 2comm, 1exp:", logs["taskcommexpB reward (mean)"])
+
+
+            # ---- Run test with 1 tasks, 1 comms, 2 explore ----
+            # Fix agent actions
+            agents = env.base_env.sim_env.scenario.active_agents
+            actions = []
+            for i, _ in enumerate(agents):
+                if i < 2:
+                    actions += EXPLORE_ONLY
+                elif i == 2:
+                    actions += COMMS_ONLY
+                elif i == 3:
+                    actions += TASKS_ONLY
+            actions = TensorDict({"action": torch.tensor(actions, dtype=torch.float32).unsqueeze(0)}, batch_size=env.batch_size)
+
+            # Run test & log
+            taskcommexpC_rew_mean, taskcommexpC_rew_sum = run_fixed_heuristics(env, logs, actions, rollout_steps, name="taskcommexpC", scenario_name=scenario_name, seed=run, folder_path=folder_path)      
+            print("Mean 1task, 1comm, 2exp:", logs["taskcommexpC reward (mean)"])
 
 
             # ---- Save results to CSV ----
@@ -283,9 +280,12 @@ def run_tests(scenario_configs,
                 writer.writerow([
                     test, run,
                     policy_reward_mean, policy_reward_sum, policy_actions,
-                    h_tasks_reward_mean, h_tasks_reward_sum,
-                    h_split_reward_mean, h_split_reward_sum,
-                    planner_reward_mean, planner_reward_sum
+                    tasks_rew_mean, tasks_rew_sum,
+                    taskcomms_rew_mean, taskcomms_rew_sum,
+                    taskexp_rew_mean, taskexp_rew_sum,
+                    taskcommexpA_rew_mean, taskcommexpA_rew_sum,
+                    taskcommexpB_rew_mean, taskcommexpB_rew_sum,
+                    taskcommexpC_rew_mean, taskcommexpC_rew_sum,
                 ])
         
         print("Done!")
@@ -358,142 +358,6 @@ def rollout_fixed_actions(env: TransformedEnv,
 
 
 
-def rollout_with_planner(env: TransformedEnv,
-                         actions,
-                         sim_data,
-                         merger_data, 
-                         dec_mcts_data, 
-                         sim_brvns_data,
-                         rollout_steps: int,
-                         planning_iters: int
-                         ):
-    scen = env.base_env.sim_env.scenario
-    agents = scen.active_agents
-
-    logs = {}
-    logs["reward"] = 0.0
-    rewards = []
-
-    planner = HybDecPlanner(sim_data, merger_data, dec_mcts_data, sim_brvns_data)
-
-    # Update agent planning observations
-    tasks_pos, workers_pos = get_updated_tasks_workers(agents)
-    base_pos = scen.base.state.pos.squeeze().tolist() + [0.0] # 3D pos add Z
-    
-    # Create task dict
-    task_dict = {}
-    task_dict[sim_data["start"]] = Task(sim_data["start"], base_pos, 0, 1)
-    task_dict[sim_data["end"]] = Task(sim_data["end"], base_pos, 0, 1)
-
-    for i, pos in enumerate(tasks_pos):
-        pos += [0.0] # 3D pos add Z
-        task_dict["v"+str(i)] = Task("v"+str(i), pos, 1, 1) # work 1, reward 1
-
-    # Create initial plan
-    planner.prepare_init_plans(task_dict, workers_pos, base_pos)
-    
-    # For step in rollout_steps:
-    for step in range(rollout_steps):
-
-        # Update goal assignments
-        i = 0
-        for agent in agents:
-            if agent.mode == "WORKER":
-                # Manually set schedule goals according to planner
-                agent.set_mission_plan(planner.get_agent_plan(i))
-                i += 1
-
-        # Roll out plan
-        tdict = env.base_env._step(actions)
-        logs["reward"] += tdict["reward"].item()
-        rewards.append(tdict["reward"].item())
-
-        # Create next plan (if steps remain)
-        task_dict = {}
-        if step < rollout_steps-1:
-            # Update agent planning observations
-            tasks_pos, workers_pos = get_updated_tasks_workers(agents)
-            for j, pos in enumerate(tasks_pos):
-                pos += [0.0] # 3D pos add Z
-                task_dict["v"+str(j)] = Task("v"+str(j), pos, 1, 1) # work 1, reward 1
-            task_dict[sim_data["rob_task"]] = Task(sim_data["rob_task"][:], base_pos[:], 0, 1) # Will be overwritten in planner
-            task_dict[sim_data["end"]] = Task(sim_data["end"][:], base_pos[:], 0, 1)
-
-            # Create plans
-            planner.solve_worker_schedules(workers_pos, task_dict, planning_iters)
-
-    return rewards
-
-def get_updated_tasks_workers(agents):
-    """Process new observations from environment"""
-
-    return_task_pos = []
-    tasks_pos = agents[0].obs["obs_tasks"][0].squeeze().tolist()[:]
-    print("TASKS POS:", tasks_pos)
-    for t in tasks_pos:
-        if t[0] < 2.0: return_task_pos.append(t)
-    print("RETURN TASKS POS:", return_task_pos)
-    workers_pos = [a.state.pos.squeeze().tolist()+[0.0] for a in agents if a.mode == "WORKER"]
-
-    return return_task_pos, workers_pos
-
-
-def generate_planner_data(scenario_config, solver_config):
-    """Load data into correct configurations for solver"""
-    
-    # with open(scenario_config, "r") as p_fp:
-    #     scenario_config = yaml.safe_load(p_fp)
-    #     with open(solver_config, "r") as s_fp:
-    #         solver_config = yaml.safe_load(s_fp)
-
-    dims = (tuple(solver_config["xCoordRange"]),
-            tuple(solver_config["yCoordRange"]),
-            tuple(solver_config["zCoordRange"]),
-            )
-
-    sim_data = {  # "graph": deepcopy(planning_graph),
-        "start": solver_config["start"],
-        "end": solver_config["end"],
-        "c": solver_config["c"],
-        "budget": solver_config["budget"],
-        "velocity": solver_config["velocity"],
-        "energy_burn_rate": solver_config["energy_burn_rate"],
-        "basic": solver_config["basic"],
-        "m_id": solver_config["m_id"],
-        "env_dims": dims,
-        "rob_task": solver_config["rob_task"],
-        "base_loc": solver_config["base_loc"], # Dummy initial base location
-    }
-
-    merger_data = {"rel_mod": solver_config["rel_mod"],
-                    "rel_thresh": solver_config["rel_thresh"],
-                    "mcs_iters": solver_config["mcs_iters"]
-                    }
-
-    dec_mcts_data = {"num_robots": solver_config["num_workers"],
-                        "fail_prob": solver_config["failure_probability"],
-                        "comm_n": solver_config["comm_n"],
-                        "plan_iters": solver_config["planning_iters"], # for DecMCTS
-                        "t_max": solver_config["t_max_decMCTS"],
-                        "sim_iters": solver_config["sim_iters"] # for MCS
-                        }
-
-    sim_brvns_data = {"num_robots": solver_config["num_workers"],
-                        "alpha": solver_config["alpha"],
-                        "beta": solver_config["beta"],
-                        "k_initial": solver_config["k_initial"],
-                        "k_max": solver_config["k_max"],
-                        "t_max": solver_config["t_max_simBRVNS"],
-                        "t_max_init": solver_config["t_max_init"],
-                        "explore_iters": solver_config["exploratory_mcs_iters"],
-                        "intense_iters": solver_config["intensive_mcs_iters"],
-                        "act_samples": solver_config["act_samples"],
-                        }
-
-    return sim_data, merger_data, dec_mcts_data, sim_brvns_data
-
-
-
 if __name__ == "__main__":
 
     if len(sys.argv) < 6:
@@ -505,8 +369,7 @@ if __name__ == "__main__":
     test_fp = sys.argv[3]
     model_fp = sys.argv[4]
     checkpt_fp = sys.argv[5]
-    comp_fp = sys.argv[6]
-    test_folder_name = sys.argv[7]
+    test_folder_name = sys.argv[6]
 
     # Env, Scenario & params
     scenario = Scenario()  
@@ -526,11 +389,6 @@ if __name__ == "__main__":
         # "conf/models/mat_9.yaml",
     # ]
 
-    # Comparison Method Params
-    comp_configs = [comp_fp]
-        # "conf/models/mat_9.yaml",
-    # ]
-
     # Checkpoint
     checkpoint = checkpt_fp
 
@@ -540,11 +398,9 @@ if __name__ == "__main__":
               test_configs,
               model_configs,
               checkpoint,
-              comp_configs,
               folder_path=test_folder_name
               )
     
 
 
-# python evaluations/comparisons.py "conf/scenarios/comms_5_eval.yaml" "conf/envs/planning_env_explore_5_1env.yaml" "evaluations/tests/trial1.yaml" "evaluations/configs_weights/policy_configs/fullTF.yaml" "evaluations/configs_weights/policy_weights/dense_fullTF.pt" "evaluations/hybdec/solver1.yaml" "comparisons"
-# python evaluations/comparisons.py "conf/scenarios/comms_5_eval2.yaml" "conf/envs/planning_env_explore_5_1env.yaml"  "evaluations/tests/trial1.yaml" "evaluations/configs_weights/policy_configs/fullTF.yaml" "evaluations/configs_weights/policy_weights/dense_fullTF.pt" "evaluations/hybdec/solver1.yaml" "evaluations/comparisons"
+# python evaluations/comparisons.py "conf/scenarios/comms_5.yaml" "conf/envs/planning_env_explore_5_1env.yaml"  "evaluations/tests/trial1.yaml" "evaluations/configs_weights/policy_configs/fullTF.yaml" "evaluations/configs_weights/policy_weights/dense_fullTF.pt" "evaluations/fixed_comparisons"

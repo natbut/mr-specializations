@@ -276,6 +276,8 @@ def plot_weights_multi_axes(rollout_idx: int, rd: RolloutData, outdir: str, dpi:
     max_len = max(len(rd.weights[a]) for a in agents if isinstance(rd.weights[a], (list, tuple)))
     x = np.arange(max_len)
 
+    x_labels = ["Task", "Agent", "Frontier", "Near\nComm", "Needy\nComm", "Mother"]
+
     # Layout: one row, num_agents columns; widen figure as needed
     fig_w = max(8, 3 * num_agents)
     fig, axes = plt.subplots(1, num_agents, figsize=(fig_w, 4), sharey=True)
@@ -294,8 +296,9 @@ def plot_weights_multi_axes(rollout_idx: int, rd: RolloutData, outdir: str, dpi:
         ax.set_ylim([-1.0, 1.0])
         ax.grid(True, axis='y', linestyle=':', linewidth=0.6, alpha=0.7)
         ax.set_xticks(x)
+        ax.set_xticklabels(x_labels, fontsize=8, rotation=0)
 
-    axes[0].set_ylabel('Scalar Value', fontsize=18)
+    axes[0].set_ylabel('Spec Value', fontsize=18)
     fig.suptitle(f"Rollout {rollout_idx} — Specializations by Passenger", fontsize=20)
     fig.tight_layout(rect=[0, 0.02, 1, 0.95])
 
