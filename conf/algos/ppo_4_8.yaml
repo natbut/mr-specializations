@@ -4,7 +4,7 @@ lr: 0.0001
 max_grad_norm: 1.0
 
 frames_per_batch: 2048 # training batch size
-total_frames: 250000 # total frames collected
+total_frames: 125000 # total frames collected
 
 sub_batch_size: 256  # cardinality of the sub-samples gathered from the current data in the inner loop
 num_epochs: 16  # optimization steps per batch of data collected
@@ -12,5 +12,5 @@ clip_epsilon: 0.2  # clip value for PPO loss: see the equation in the intro for 
 
 gamma: 0.99
 lambda: 0.95
-entropy_eps: 0.01 # NOTE RETURN TO 0.01
+entropy_eps: 0.0051302 # NOTE RETURN TO 0.01
 decay_entropy: True
