@@ -11,6 +11,7 @@ from vmas.simulator.scenario import BaseScenario
 import envs.heuristics
 
 from moviepy import ImageSequenceClip
+import os
 
 def load_func(dotpath : str):
     """ load function in module.  function is right-most segment """
@@ -35,13 +36,17 @@ class VMASPlanningEnv(EnvBase):
         self.horizon = env_kwargs.pop("horizon", 0.25)
         self.planning_pts = env_kwargs.pop("planning_pts", 30)
         self.macro_step = env_kwargs.pop("macro_step", 10) # Number of sub-steps to execute per step 
-        self.render = env_kwargs.pop("render", False)
 
+        self.render = env_kwargs.pop("render", False)
+        self.log_rollout=False
+        self.log_fp = None
+        self.log_file = None
         self.use_softmax = False
         self.use_max = False
 
         self.render_fp = None
         self.count = 0
+        self.stored_tasks = []
 
         super().__init__(batch_size=[self.num_envs], device=device)
         # VMAS Environment Configuration
@@ -129,6 +134,8 @@ class VMASPlanningEnv(EnvBase):
         """Reset all VMAS worlds and return initial state."""
         sim_obs = self.sim_env.reset() # Gets global obs from agent 0
 
+        self.steps = 0
+
         # print("STEP SIM OBS:", sim_obs[0])
         obs = TensorDict(sim_obs[0], batch_size=self.batch_size, device=self.device)
         
@@ -144,6 +151,22 @@ class VMASPlanningEnv(EnvBase):
         2. Execute the trajectories for the given horizon.
         3. Return next state, rewards, and termination status.
         """
+
+        if self.log_rollout and self.steps == 0:
+            log_path = self.log_fp + "_rollout_log.csv"
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            log_file = open(self.log_fp + "_rollout_log.csv", "w")
+            log_file.write("rollout,step,entity_type,entity_id,x,y\n")
+            # Log fixed entities (bases and obstacles)
+            base = self.sim_env.scenario.base.state.pos.tolist()[0]
+            print("Base:", base)
+            log_file.write(f"0,0,base,0,{base[0]},{base[1]}\n")
+            for i, obstacle in enumerate(self.sim_env.scenario.obstacles):
+                obs = obstacle.state.pos.tolist()[0]
+                print("Obstacle:", obs)
+                log_file.write(f"0,0,obstacle,{i},{obs[0]},{obs[1]}\n")
+
+            log_file.close()
 
         # Process actions (heuristic weights)
         heuristic_weights = actions["action"] 
@@ -165,6 +188,24 @@ class VMASPlanningEnv(EnvBase):
         # print("WEIGHTS SAMPLE:", heuristic_weights[:5], "shape:", heuristic_weights.shape)
         # print("AGENTS:", self.sim_env.scenario.agents, "shape:", len(self.sim_env.agents))
 
+        # Log heuristic weights
+        if self.log_rollout:
+            log_file = open(self.log_fp+"_rollout_log.csv", "a")
+            for i, weights in enumerate(heuristic_weights.tolist()[0]):
+                log_file.write(f"{self.steps},0,weights,{i},{weights[0]},{weights[1]},{weights[2]},{weights[3]},{weights[4]},{weights[5]}\n")
+            log_file.close()
+
+        # Log task positions
+        if self.log_rollout:
+            log_file = open(self.log_fp+"_rollout_log.csv", "a")
+            for i, task in enumerate(self.sim_env.scenario.tasks):
+                task = task.state.pos.tolist()[0]
+                if task[0] < 2.0 and task not in self.stored_tasks:
+                    log_file.write(f"{self.steps},{0},task,{i},{task[0]},{task[1]}\n")
+                    self.stored_tasks.append(task)
+            log_file.close()
+
+
         # Execute and aggregate rewards
         rewards = torch.zeros((self.num_envs, 1), device=self.device)
         # dones = torch.full((self.num_envs, 1), False, device=self.device)
@@ -173,7 +214,7 @@ class VMASPlanningEnv(EnvBase):
         for agent in self.sim_env.agents: # Reset agent trajectories
             agent.trajs = []
         # print("\n= Pre-rollout step! =")
-        self.steps += 1
+
         # print("Active agents:", [a.is_active for a in self.sim_env.agents])
         for t in range(self.macro_step):
             verbose = False
@@ -189,6 +230,27 @@ class VMASPlanningEnv(EnvBase):
                 else:
                     u_action.append(agent.null_action)
 
+            # LOG AGENT TRAJECTORIES
+            if self.log_rollout:
+                log_file = open(self.log_fp+"_rollout_log.csv", "a")
+                for id, agent in enumerate(self.sim_env.agents):
+                    if agent.is_active and agent.trajs:
+                        for i, traj in enumerate(agent.trajs):
+                            # Check if a new trajectory has been generated
+                            # Compare trajectories using torch.equal for tensors
+                            # print("Logged traj: ", agent.last_logged_traj if hasattr(agent, 'last_logged_traj') else None)
+                            # print("Current traj:", traj)
+                            if not hasattr(agent, 'last_logged_traj') or not torch.equal(torch.stack(agent.last_logged_traj), torch.stack(traj)):
+                                for waypoint_idx, waypoint in enumerate(traj):
+                                    wp = waypoint.tolist()
+                                    log_file.write(f"{self.steps},{t},agent_{id}_traj_{i},{waypoint_idx},{wp[0]},{wp[1]}\n")
+                                
+                                # Update the last logged trajectory
+                                # if not hasattr(agent, 'last_logged_traj'):
+                                #     agent.last_logged_traj = [[] for _ in range(self.num_envs)]
+                                agent.last_logged_traj = traj
+                log_file.close()
+    
             # BURST TASK SPAWNING (ONLY ON LAST STEP)
             if t == self.macro_step-1 and self.sim_env.scenario.spawn_tasks_burst:
                 self.sim_env.scenario.spawn_tasks(attempts=self.macro_step)
@@ -240,6 +302,7 @@ class VMASPlanningEnv(EnvBase):
         # print("Next TDict:\n", next_state)
         
         # print("= Post-rollout step! = ")
+        self.steps += 1
 
         return next_state #, rewards, done, {}
 

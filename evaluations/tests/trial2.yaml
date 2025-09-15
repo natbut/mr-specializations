@@ -1,0 +1,18 @@
+
+agent_assignments:
+- WORKER
+- WORKER
+- SUPPORT
+- SUPPORT
+
+<<<<<<< HEAD:conf/tests/trial2.yaml
+num_runs: 50 # 50
+=======
+num_runs: 30 # 50
+>>>>>>> ae8592be4e2f1d9a50e01a6bb4f9422fedae89bb:evaluations/tests/trial2.yaml
+
+rollout_steps: 16 # 8
+
+planning_iters: 1
+
+# predefined tasks 
