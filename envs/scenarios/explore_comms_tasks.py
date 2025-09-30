@@ -1071,22 +1071,21 @@ class Scenario(BaseScenario):
         candidate_cell_ids = [ids for b, ids in enumerate(self.explored_cell_ids)]
         candidate_cell_centers = [self.discrete_cell_centers[b, ids] for b, ids in enumerate(self.explored_cell_ids)]
 
-        # print("\nExplored cells:", candidate_cell_ids)
-
-        # print("Tasked cells:", self.tasked_cell_ids)
-        # Remove cells that have already spawned tasks
-        if self.one_task_per_cell:
-            for b in range(self.world.batch_dim):
-                tasked_cells = self.tasked_cell_ids[b]
-                if len(tasked_cells) > 0:
-                    candidate_cell_ids[b] = [i for i in candidate_cell_ids[b] if i not in tasked_cells]
-
-        # print("Untasked cells:", candidate_cell_ids)
-
         occupied_positions_agents = [self.agents_pos]
 
         for _ in range(attempts):
             for i, task in enumerate(self.tasks):
+
+                # print("\nExplored cells:", candidate_cell_ids)
+                # print("Tasked cells:", self.tasked_cell_ids)
+                # Remove cells that have already spawned tasks
+                if self.one_task_per_cell:
+                    for b in range(self.world.batch_dim):
+                        tasked_cells = self.tasked_cell_ids[b]
+                        if len(tasked_cells) > 0:
+                            candidate_cell_ids[b] = [i for i in candidate_cell_ids[b] if i not in tasked_cells]
+
+                # print("Untasked cells:", candidate_cell_ids)
                 
                 occupied_positions_tasks = [
                                             o.state.pos.unsqueeze(1)

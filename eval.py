@@ -54,3 +54,5 @@ if __name__ == "__main__":
             )
         
 #  python eval.py "conf/scenarios/comms_0.yaml" "conf/envs/planning_env_explore_2.yaml" "conf/models/mat_2_0.yaml" "runs\comms_0_planning_env_explore_2_ppo_4_2_flatAct_mat_2_0\checkpoints\best.pt" "eval_test" 1 8
+
+# python eval.py "conf/scenarios/comms_7.yaml" "conf/envs/planning_env_explore_7_1env.yaml" "conf/models/mat_2_3_4.yaml" "evaluations\configs_weights\policy_weights\comms7_234.pt" "eval_test" 1 16

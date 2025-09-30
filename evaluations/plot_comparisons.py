@@ -90,6 +90,6 @@ if __name__ == "__main__":
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylabel('Mean Task Value Returned')
-    ax.set_title(title)
+    ax.set_title(title, fontsize=32)
     plt.tight_layout()
     plt.show()

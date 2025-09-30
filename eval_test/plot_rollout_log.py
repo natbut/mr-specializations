@@ -45,8 +45,8 @@ import seaborn as sns
 # Use a few distinct markers for entities; extend as needed.
 ENTITY_MARKERS = {
     'base': 'P',       # plus-filled star
-    'obstacle': 'X',   # X
-    'task': '^',       # triangle up
+    'obstacle': 's',   # X
+    'task': 'X',       # triangle up
 }
 
 def parse_agent_traj(entity_type: str):
@@ -204,9 +204,11 @@ def plot_map(rollout_idx: int, rd: RolloutData, outdir: str, dpi: int = 150,
                 marker = ENTITY_MARKERS.get(etype, 'o')
                 if etype in 'base':
                     label = "Mothership"
+                    color = 'blue'
                 else:
                     label = "Obstacle"
-                ax.scatter(xs, ys, label=label, marker=marker, s=140, edgecolors='black', linewidths=0.7, alpha=0.8)
+                    color = 'black'
+                ax.scatter(xs, ys, label=label, marker=marker, color=color, s=140, edgecolors='black', linewidths=0.7, alpha=0.8)
 
     # Then draw rollout-specific entities (e.g., tasks) (sizes doubled)
     for etype, points in rd.entities.items():
@@ -219,7 +221,8 @@ def plot_map(rollout_idx: int, rd: RolloutData, outdir: str, dpi: int = 150,
         marker = ENTITY_MARKERS.get(etype, 'o')
         if etype in 'task':
             label = "Task"
-        ax.scatter(xs, ys, label=label, marker=marker, s=120, edgecolors='black', linewidths=0.5)
+            color = 'green'
+        ax.scatter(xs, ys, label=label, marker=marker, color=color, s=120, edgecolors='black', linewidths=0.5)
 
     # Plot trajectories: colored per agent
     by_agent = defaultdict(list)
@@ -276,7 +279,8 @@ def plot_weights_multi_axes(rollout_idx: int, rd: RolloutData, outdir: str, dpi:
     max_len = max(len(rd.weights[a]) for a in agents if isinstance(rd.weights[a], (list, tuple)))
     x = np.arange(max_len)
 
-    x_labels = ["Task", "Agent", "Frontier", "Near\nComm", "Needy\nComm", "Mother"]
+    # x_labels = ["Task", "Agent", "Frontier", "Near\nComm", "Needy\nComm", "Mother"]
+    x_labels = [i+1 for i in range(max_len)]
 
     # Layout: one row, num_agents columns; widen figure as needed
     fig_w = max(8, 3 * num_agents)
@@ -292,11 +296,11 @@ def plot_weights_multi_axes(rollout_idx: int, rd: RolloutData, outdir: str, dpi:
             color = agent_colors[ag]
         ax.bar(x, w_arr, width=0.8, color=color)
         ax.set_title(f'Passenger {ag}', fontsize=20)
-        ax.set_xlabel('Specialization Idx', fontsize=18)
+        ax.set_xlabel('Specialization Idx', fontsize=16)
         ax.set_ylim([-1.0, 1.0])
         ax.grid(True, axis='y', linestyle=':', linewidth=0.6, alpha=0.7)
         ax.set_xticks(x)
-        ax.set_xticklabels(x_labels, fontsize=8, rotation=0)
+        ax.set_xticklabels(x_labels, fontsize=14, rotation=0)
 
     axes[0].set_ylabel('Spec Value', fontsize=18)
     fig.suptitle(f"Rollout {rollout_idx} — Specializations by Passenger", fontsize=20)
@@ -325,17 +329,19 @@ def main():
     r_end = args.rollouts[1] if args.rollouts else None
 
     data, global_entities = load_log(args.csv, r_start, r_end)
+    print(f"Loaded {len(data)} rollouts from {args.csv}")
 
     for r, rd in data.items():
         # Assign consistent colors for agents in this rollout
         agent_colors = assign_agent_colors(rd)
-
+        print("Plotting map")
         map_path = plot_map(
                                 r, rd, args.outdir, dpi=args.dpi,
                                 agent_colors=agent_colors,
                                 global_entities=global_entities,
                                 traj_stride=args.traj_stride
                             )
+        print('Plotting weights')
         weights_path = plot_weights_multi_axes(r, rd, args.outdir, dpi=args.dpi, agent_colors=agent_colors)
 
         if args.show:
